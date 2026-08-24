@@ -1,0 +1,23 @@
+# Local test / backup artifacts
+*.bak
+*.bak-*
+*.testbak
+*.tmp
+config.json.tmp
+
+# Anything captured from SimAppPro while reverse-engineering.
+# Its config.json holds AutoLoginSaveAccount: a base64 blob containing the
+# account email and password in the clear. Never commit it.
+simapppro-config*.json
+WWTHID*.log
+
+# Runtime logs
+*.log
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+TODO.md
+POSTS.md

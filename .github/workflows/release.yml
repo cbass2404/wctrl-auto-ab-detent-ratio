@@ -1,0 +1,135 @@
+name: Release
+
+# Fires when a version tag is pushed. Tags do not change files, so the tag and
+# the committed VERSION can disagree if VERSION was bumped after tagging - this
+# checks they match before publishing anything.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Validate and build the zip without publishing'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # needed to create the release; scoped to this workflow only
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax gate
+        shell: pwsh
+        run: .\tools\Test-Syntax.ps1
+
+      - name: Check the tag matches VERSION
+        shell: pwsh
+        run: |
+          $version = (Get-Content .\VERSION -Raw).Trim()
+          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF -replace '^refs/tags/', '' } else { '' }
+
+          # Compare with the optional leading v removed from both, so v1.0.0-alpha
+          # in VERSION and the tag v1.0.0-alpha agree either way round.
+          $norm = { param($s) $s -replace '^[vV](?=\d)', '' }
+          $vNorm = & $norm $version
+          Write-Host "VERSION file : $version  (normalised: $vNorm)"
+
+          if (-not $tag) { Write-Host 'Manual run - no tag to compare.'; return }
+
+          $tNorm = & $norm $tag
+          Write-Host "tag          : $tag  (normalised: $tNorm)"
+          if ($vNorm -ne $tNorm) {
+            Write-Host "::error::Tag '$tag' does not match VERSION '$version'. Commit the VERSION bump, then re-tag that commit."
+            exit 1
+          }
+          Write-Host 'Tag and VERSION agree.'
+          "version=$vNorm"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        id: check
+
+      - name: Verify a clean install works
+        shell: pwsh
+        run: |
+          # A throwaway folder shaped like a DCS Saved Games directory.
+          $dcs = Join-Path $env:RUNNER_TEMP 'DCS'
+          New-Item -ItemType Directory -Path (Join-Path $dcs 'Config') -Force | Out-Null
+
+          .\tools\deploy.ps1 -SavedGames $dcs -Confirm:$false
+
+          $version = ((Get-Content .\VERSION -Raw).Trim()) -replace '^[vV](?=\d)', ''
+          $dir  = Join-Path $dcs "Scripts\wctrl-auto-ab-detent-ratio-$version"
+          $hook = Join-Path $dcs "Scripts\Hooks\wctrl-auto-ab-detent-ratio-hook-$version.lua"
+
+          $lib = Join-Path $dir 'lib'
+          foreach ($p in @($dir, $hook, $lib,
+                           (Join-Path $dir 'launch-config-manager.cmd'),
+                           (Join-Path $lib 'helper.ps1'), (Join-Path $lib 'WinctrlHid.ps1'),
+                           (Join-Path $lib 'config-manager-gui.ps1'),
+                           (Join-Path $lib 'config.json'), (Join-Path $lib 'run-hidden.vbs'))) {
+            if (-not (Test-Path -LiteralPath $p)) { Write-Host "::error::install did not produce $p"; exit 1 }
+          }
+
+          # The hook must have had its placeholders substituted, or it will look
+          # for the helper in a folder that does not exist.
+          $hookText = Get-Content -LiteralPath $hook -Raw
+          if ($hookText -match '@@(PROJECT_DIR|VERSION)@@') { Write-Host '::error::hook still contains unsubstituted placeholders'; exit 1 }
+          if ($hookText -notmatch [regex]::Escape("wctrl-auto-ab-detent-ratio-$version")) { Write-Host '::error::hook does not point at its own folder'; exit 1 }
+
+          Write-Host "Install verified for $version"
+
+      - name: Build the release zip
+        shell: pwsh
+        run: |
+          $version = ((Get-Content .\VERSION -Raw).Trim()) -replace '^[vV](?=\d)', ''
+          $stage = Join-Path $env:RUNNER_TEMP "pkg\wctrl-auto-ab-detent-ratio-$version"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+          # Only what a user needs to install. tools\deploy.ps1 is required
+          # because install.cmd calls it; the maintainer tools (release.cmd,
+          # Test-Syntax.ps1) and the CI config are deliberately left out.
+          Copy-Item -Path 'Scripts' -Destination $stage -Recurse -Force
+          New-Item -ItemType Directory -Path (Join-Path $stage 'tools') -Force | Out-Null
+          Copy-Item -Path 'tools\deploy.ps1' -Destination (Join-Path $stage 'tools') -Force
+          foreach ($f in 'install.cmd', 'VERSION', 'README.md', 'LICENSE') {
+            Copy-Item -Path $f -Destination $stage -Force
+          }
+
+          # The package must be self-sufficient: install.cmd plus what it calls.
+          $proj = "Scripts\wctrl-auto-ab-detent-ratio"
+          foreach ($need in 'install.cmd', 'tools\deploy.ps1', 'VERSION',
+                            "$proj\launch-config-manager.cmd",
+                            "$proj\lib\config-manager-gui.ps1",
+                            "$proj\lib\helper.ps1",
+                            "$proj\lib\WinctrlHid.ps1",
+                            "$proj\lib\config.json",
+                            "$proj\lib\run-hidden.vbs") {
+            if (-not (Test-Path -LiteralPath (Join-Path $stage $need))) {
+              Write-Host "::error::package is missing $need"; exit 1
+            }
+          }
+          foreach ($unwanted in 'tools\release.cmd', 'tools\Test-Syntax.ps1') {
+            if (Test-Path -LiteralPath (Join-Path $stage $unwanted)) {
+              Write-Host "::error::package should not contain $unwanted"; exit 1
+            }
+          }
+
+          $zip = Join-Path $env:RUNNER_TEMP "wctrl-auto-ab-detent-ratio-$version.zip"
+          Compress-Archive -Path $stage -DestinationPath $zip -Force
+          Write-Host "built $zip"
+          "zip=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        id: package
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.zip }}
+          # Anything with a pre-release suffix (-alpha, -beta, -rc) is flagged so
+          # it does not show up as "Latest" for people browsing the repo.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true

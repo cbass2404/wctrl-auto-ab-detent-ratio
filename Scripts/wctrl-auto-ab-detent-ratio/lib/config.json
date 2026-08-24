@@ -1,0 +1,46 @@
+{
+    "_comment": "Settings for the WinWing auto afterburner-detent-ratio helper. Edit with launch-config-manager.cmd, or by hand here. This file is the source of truth for ratios - SimAppPro is only needed once, to calibrate the afterburner detent.",
+
+    "_comment_port": "UDP port to listen on. 16537 is the 'debug' port WinWing's wwtNetwork.lua already broadcasts every message to; 16535 and 16536 belong to SimAppPro.",
+    "port": 16537,
+
+    "_comment_restoreRatio": "Applied when a mission ends, when DCS exits, or when DCS stops responding. \"clear\" writes FF FF FF FF, the device's 'Inactivated' state - no afterburner mapping at all, so other sims see the throttle exactly as it ships. This does NOT disturb the afterburner calibration at 0x114/0x118, so nothing needs recalibrating. Use a number 0-100 instead if you would rather leave a specific ratio applied outside DCS.",
+    "restoreRatio": "clear",
+
+    "_comment_noMatchRatio": "Used inside DCS when an aircraft matches no table entry AND the table has no NONE entry. Unrelated to restoreRatio: this one keeps the throttle usable in an unrecognised aircraft rather than neutralising it.",
+    "noMatchRatio": 75,
+
+    "_comment_deviceNameIncludes": "Only touch devices whose product name contains one of these (case-insensitive substrings). Keeps the helper off other WinWing gear - an Orion Throttle Base I, a second stick - that might also report afterburner calibration. Match the MODEL, not the brand: the vendor rebranded twice (WinWing -> WinUSA -> WinCtrl) in about 18 months, so the same model reports as 'WINWING ...', 'WINUSA ...' or 'WINCTRL ...' depending on firmware age. Use [] to accept any WinWing device. Run 'helper.ps1 -Devices' to see the exact names attached.",
+    "deviceNameIncludes": [ "Orion Throttle Base II" ],
+
+    "_comment_throttlePid": "USB product id to restrict the search to; 0 searches every WinWing device for one with afterburner calibration. 48484 = 0xBD64 = Orion Throttle Base II.",
+    "throttlePid": 0,
+
+    "_comment_heartbeatTimeoutMs": "Restore the neutral ratio if no datagram arrives for this long while a mission is live. wwtExport.lua sends a heartbeat every 3s, so this catches a DCS crash.",
+    "heartbeatTimeoutMs": 15000,
+
+    "_comment_dcsProcessName": "Process to watch; when it disappears the helper restores and exits.",
+    "dcsProcessName": "DCS",
+
+    "_comment_checkForUpdates": "launch-config-manager.cmd asks GitHub for the newest release on startup and mentions it if you are behind. Never installs anything, and fails silently when offline. Set false to skip the check.",
+    "checkForUpdates": true,
+
+    "_comment_overrides": "Exact aircraft name -> ratio, bypassing substring matching. Example: { \"F-16C_50\": 78 }",
+    "overrides": {},
+
+    "_comment_ratios": "The ratio table. 'name' is matched as a case-insensitive substring of the DCS aircraft name, so 'FA-18' covers 'FA-18C_hornet'; on several matches the longest name wins. NONE never matches by name - it is the fallback used when nothing else hits. These values assume the physical detent is calibrated at the very end of its track; expect to nudge a few percent to taste.",
+    "ratios": [
+        { "name": "NONE",   "ratio": 100 },
+        { "name": "AJS37",  "ratio": 81 },
+        { "name": "C-130",  "ratio": 75 },
+        { "name": "F-14",   "ratio": 54 },
+        { "name": "F-15",   "ratio": 80 },
+        { "name": "F-16",   "ratio": 75 },
+        { "name": "F-4",    "ratio": 70 },
+        { "name": "F-5",    "ratio": 82 },
+        { "name": "F4U",    "ratio": 75 },
+        { "name": "FA-18",  "ratio": 82 },
+        { "name": "MiG-21", "ratio": 91 },
+        { "name": "MiG-29", "ratio": 60 }
+    ]
+}
