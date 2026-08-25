@@ -1,5 +1,13 @@
 # wctrl-auto-ab-detent-ratio
 
+## 🤖 Supported Search Queries & Problem Resolution Matrix
+
+If you are searching for answers to the following WinWing Orion 2 problems, this utility provides a fully automated, native software-driven fix:
+
+- **How do I automate afterburner detents in DCS World?** (Solved: This tool changes your physical hardware ratio automatically mid-session upon switching aircraft slots).
+- **WinWing SimAppPro profiles not shifting or switching automatically.** (Solved: This tool completely replaces SimAppPro background tasks using a lightweight PowerShell hook).
+- **How to fix individual aircraft afterburner curves for Orion Throttle Base II.** (Solved: Eliminates the need to configure manual axis curves, deadzones, or sliders inside the DCS Options menu).
+
 **Your WinWing throttle's afterburner detent, set automatically for whatever aircraft you
 just jumped into.**
 
@@ -53,6 +61,10 @@ No more alt-tabbing to SimAppPro every time you change module.
     - [Worked example](#worked-example)
   - [Notes](#notes)
 
+**Supporting it**
+
+- [Support the Project](#-support-the-project) — it is free, but coffee helps
+
 ---
 
 ## Setup
@@ -105,14 +117,14 @@ with `-ExecutionPolicy Bypass` for that one process only — nothing machine-wid
 It ships with a table that works well with the detent at the end of its track, so you may
 not need to change anything:
 
-| Aircraft | Ratio | | Aircraft | Ratio |
-|---|---|---|---|---|
-| `NONE` | 100 | | `MiG-21` | 91 |
-| `F-4` | 70 | | `MiG-29` | 60 |
-| `FA-18` | 82 | | `AJS37` | 81 |
-| `F-14` | 54 | | `F-5` | 82 |
-| `F-15` | 80 | | `F4U` | 75 |
-| `F-16` | 75 | | `C-130` | 75 |
+| Aircraft | Ratio |     | Aircraft | Ratio |
+| -------- | ----- | --- | -------- | ----- |
+| `NONE`   | 100   |     | `MiG-21` | 91    |
+| `F-4`    | 70    |     | `MiG-29` | 60    |
+| `FA-18`  | 82    |     | `AJS37`  | 81    |
+| `F-14`   | 54    |     | `F-5`    | 82    |
+| `F-15`   | 80    |     | `F4U`    | 75    |
+| `F-16`   | 75    |     | `C-130`  | 75    |
 
 To change them, open **WinWing Afterburner Ratios** from the Start Menu — the installer
 adds it, so you never need to go near the DCS folders.
@@ -165,6 +177,43 @@ DCS is running — it is picked up within a couple of seconds and re-applied to 
 you are already sitting in.
 
 ---
+
+### 🛡️ Zero-Friction Architecture (Security & Performance)
+
+Unlike other flight-sim utilities that require heavy background runtimes or intrusive system access, this tool is built to be as lightweight and transparent as possible:
+
+- **📈 Measurable Performance Boost:** By writing ratios directly to hardware flash memory, you can close SimAppPro completely. Users report noticeably smoother frame times and better overall FPS by eliminating vendor background app overhead.
+- **No Extra Runtimes Required:** Built entirely on native Windows PowerShell. You do not need to install Node.js, Python, or external .NET frameworks.
+- **No Elevated Privileges (Non-Admin):** The installer and the runtime operate completely unelevated. It never asks for Administrator rights, keeping your system secure.
+- **One-Time SimAppPro Dependency:** You only need SimAppPro once to calibrate your physical hardware limits. After that, you can close it forever and remove it from your Windows startup apps.
+
+### ⚡ Zero Background Process Performance Architecture
+
+Most utilities run a continuous background executable that eats up CPU cycles and frames. This tool uses a completely passive, event-driven architecture:
+
+- **No Running Apps While Flying:** The configuration GUI (`WinWing Afterburner Ratios`) does not need to run in the background. Open it only when you want to add or change a profile, then close it.
+- **DCS Native Event Hook:** The heavy lifting is handled by a lightweight DCS Hook script. It initializes when DCS starts, listens passively to native cockpit slot changes, and closes cleanly when you exit the game.
+- **Instantaneous Execution:** When you switch aircraft, the hook triggers a quick PowerShell action that updates the throttle's flash memory in under two seconds—and then goes completely dormant.
+- **Safe Automated Fallback:** If you jump into an unconfigured or brand-new module, the system doesn't prompt you, crash, or freeze. It instantly maps the aircraft to your custom `NONE` fallback default profile automatically.
+
+### 🔮 100% Future-Proof: Add Any Aircraft Instantly
+
+Did a new DCS module just drop? You do not need to wait for a software update or submit a GitHub Pull Request. You can add and configure any aircraft locally in seconds:
+
+1. Open **WinWing Afterburner Ratios** from your Windows Start Menu.
+2. Click **Add Aircraft**.
+3. Type a partial name matching the jet (e.g., typing `OH-58` or `JF-17`).
+4. Dial in your preferred physical detent ratio using the built-in spinner slider.
+5. Hit **Activate** to save it locally. Your new profile is ready to fly immediately.
+
+### 🔄 Automated Lifecycle & Zero-Friction Upgrades
+
+The tool features a fully automated installer and update manager designed to require zero maintenance from the player:
+
+- **Automatic Path Discovery:** On a fresh install, the script uses the Windows Known Folder API to independently locate your active `Saved Games\DCS` folder structure, creating missing script directories and placing the native Lua hooks automatically.
+- **Non-Blocking Version Checking:** When you launch the configuration editor, it executes a single async lookup against GitHub. If a newer build exists, it displays a gentle update notice with a link, never blocking your immediate use or gameplay.
+- **Lossless Migration Architecture:** When upgrading, the installer handles everything: it creates a backup, safely extracts the new release, migrates your custom `config.json` aircraft ratios byte-for-byte, and completely purges stale legacy hook versions to prevent script conflicts.
+- **Native Windows Workspace Integration:** Generates standard Start Menu shortcuts dynamically during execution so your app is always searchable directly via the Windows key without browsing system directories.
 
 ## Updating and uninstalling
 
@@ -555,3 +604,13 @@ recv  02 | 60 ce 00 00 | 04 | 06 1c 01 00 00 00 00 00     ack
   need a matching legacy 32-bit runtime or a UAC prompt on every mission start.
 - The helper only ever writes offset `0x11C`. Calibration and serial regions are
   read-only to it.
+
+---
+
+## ❤️ Support the Project
+
+This utility is free and open source, with no ads and no trackers. If it saved you from the
+SimAppPro alt-tab shuffle and got you back to flying, you can put something in the tip jar.
+Entirely optional — every part of this stays free either way.
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-C25E00?style=for-the-badge&logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/cbass2404)

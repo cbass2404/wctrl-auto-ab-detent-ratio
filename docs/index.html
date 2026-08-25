@@ -190,6 +190,20 @@ footer{padding:54px 0 76px; border-top:1px solid var(--rule); margin-top:20px}
 .foot{display:flex; flex-wrap:wrap; gap:18px; justify-content:space-between; align-items:baseline}
 .foot a{color:var(--accent)}
 
+.support{
+  border:1px solid var(--rule); background:var(--panel); box-shadow:var(--shadow);
+  padding:26px 28px; display:flex; flex-wrap:wrap; gap:24px;
+  align-items:center; justify-content:space-between;
+}
+.support-txt{display:flex; flex-direction:column; gap:7px; max-width:58ch}
+.support-txt h3{color:var(--ink); display:flex; align-items:baseline; gap:.42em}
+.hrt{font-size:.88em; line-height:1; flex:none;
+     font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif}
+.support-txt p{font-size:.97rem; color:var(--ink-2); line-height:1.5}
+.btn-ghost{background:transparent; color:var(--accent); border-color:var(--accent)}
+.btn-ghost:hover{background:var(--accent-wash); filter:none}
+.btn-ghost svg{width:21px; height:21px; flex:none; stroke:currentColor}
+
 @media (prefers-reduced-motion:no-preference){
   .rise{animation:rise .62s cubic-bezier(.2,.7,.3,1) both}
   @keyframes rise{from{opacity:0; transform:translateY(12px)} to{opacity:1; transform:none}}
@@ -374,11 +388,37 @@ footer{padding:54px 0 76px; border-top:1px solid var(--rule); margin-top:20px}
   </div>
 </section>
 
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="support">
+      <div class="support-txt">
+        <span class="eyebrow">Free &amp; open source</span>
+        <h3><span class="hrt" aria-hidden="true">❤️</span>Support the project</h3>
+        <p>
+          No ads, no trackers, no paid tier. If it saved you from the SimAppPro alt-tab shuffle and
+          got you back to flying, you can put something in the tip jar. Entirely optional &mdash;
+          every part of this stays free either way.
+        </p>
+      </div>
+      <a class="btn btn-ghost" href="https://www.buymeacoffee.com/cbass2404" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4.2 9h12.6v5.6a5 5 0 0 1-5 5H9.2a5 5 0 0 1-5-5V9Z"/>
+          <path d="M16.8 10.2h1.5a2.4 2.4 0 0 1 0 4.8h-1.5"/>
+          <path d="M8.4 2.6v2.3M12.6 2.6v2.3"/>
+        </svg>
+        Buy me a coffee
+      </a>
+    </div>
+  </div>
+</section>
+
 <footer>
   <div class="wrap">
     <div class="foot">
       <span class="eyebrow">wctrl-auto-ab-detent-ratio</span>
       <span class="mono" style="font-size:.86rem">
+        <a href="https://www.buymeacoffee.com/cbass2404" target="_blank" rel="noopener noreferrer">buy me a coffee</a>
+        <span style="color:var(--ink-3)">&nbsp;&middot;&nbsp;</span>
         <a href="https://github.com/cbass2404/wctrl-auto-ab-detent-ratio">github.com/cbass2404/wctrl-auto-ab-detent-ratio</a>
       </span>
     </div>
