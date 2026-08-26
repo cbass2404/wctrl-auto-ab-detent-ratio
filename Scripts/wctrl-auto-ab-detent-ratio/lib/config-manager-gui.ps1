@@ -235,10 +235,20 @@ function Test-IsNewer {
 
 # --------------------------------------------------------------------- UI ---
 
-$cfg    = Read-Config
-$ratios = New-Object System.Collections.ArrayList
+$cfg     = Read-Config
+$ratios  = New-Object System.Collections.ArrayList
+$skipped = New-Object System.Collections.ArrayList
 foreach ($r in @($cfg.ratios)) {
-    if ($r.name) { [void]$ratios.Add([pscustomobject]@{ name = [string]$r.name; ratio = [int]$r.ratio }) }
+    if (-not $r.name) { continue }
+    # A hand-edited ratio outside a whole 0..100 is left out of the table rather
+    # than shown: the throttle refuses it, so a row you can see and select but
+    # cannot apply would be worse than one that is plainly not there.
+    $n = 0
+    if ([int]::TryParse([string]$r.ratio, [ref]$n) -and $n -ge 0 -and $n -le 100) {
+        [void]$ratios.Add([pscustomobject]@{ name = [string]$r.name; ratio = $n })
+    } else {
+        [void]$skipped.Add("$($r.name) = $($r.ratio)")
+    }
 }
 
 $form = New-Object System.Windows.Forms.Form
@@ -260,11 +270,88 @@ $list.Size = New-Object System.Drawing.Size(400, 380)
 $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.MultiSelect = $false
-$list.GridLines = $true
+# No grid lines: the Win32 header draws its column divider on the last pixel of
+# the column while the item area draws its line one pixel further right, in a
+# lighter shade, so the two never line up. Only owner-drawing the whole control
+# would fix that, which is not worth reimplementing selection and the active-row
+# highlight for. The header dividers alone read fine.
+$list.GridLines = $false
 $list.HideSelection = $false
 $list.Anchor = 'Top,Left,Bottom,Right'
 [void]$list.Columns.Add('Aircraft', 250)
 [void]$list.Columns.Add('Ratio %', 110)
+
+# Owner-drawn, for two reasons the stock painter cannot cover:
+#
+#   * GridLines draws its vertical lines one pixel right of the header's own
+#     column dividers, and in a lighter shade, so the two never line up.
+#     Painting the rows here means horizontal separators without that mismatch.
+#   * The header has no bottom edge - the first row butts straight up against
+#     it - so it needs one drawn.
+#
+# DrawDefault is no use for either: the system paints after the handler returns
+# and would cover anything drawn here, so the row is painted in full.
+$script:ruleColor   = [System.Drawing.Color]::FromArgb(229, 229, 229)
+$script:headerColor = [System.Drawing.Color]::FromArgb(190, 190, 190)
+
+$list.OwnerDraw = $true
+
+$list.Add_DrawColumnHeader({
+    param($sender, $e)
+    $e.DrawBackground()
+    $e.DrawText()
+    $pen = New-Object System.Drawing.Pen $script:headerColor
+    $e.Graphics.DrawLine($pen, $e.Bounds.Left, $e.Bounds.Bottom - 1, $e.Bounds.Right, $e.Bounds.Bottom - 1)
+    $pen.Dispose()
+})
+
+# Deliberately empty. The control repaints a single cell on mouse-over, raising
+# DrawItem without raising DrawSubItem for every subitem in the same pass, so a
+# row-wide fill here wipes out the text of cells that are not being redrawn -
+# hovering a row made its ratio vanish. Each cell paints itself below instead.
+$list.Add_DrawItem({ param($sender, $e) })
+
+# One cell: its own background, its own text, its own slice of the separator.
+$list.Add_DrawSubItem({
+    param($sender, $e)
+    $back = if ($e.Item.Selected) { [System.Drawing.SystemColors]::Highlight } else { $e.Item.BackColor }
+    $fore = if ($e.Item.Selected) { [System.Drawing.SystemColors]::HighlightText } else { $e.Item.ForeColor }
+    $brush = New-Object System.Drawing.SolidBrush $back
+    $e.Graphics.FillRectangle($brush, $e.Bounds)
+    $brush.Dispose()
+    $flags = [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor
+             [System.Windows.Forms.TextFormatFlags]::EndEllipsis -bor
+             [System.Windows.Forms.TextFormatFlags]::NoPrefix
+    $r = New-Object System.Drawing.Rectangle (
+            ($e.Bounds.Left + 6), $e.Bounds.Top, ($e.Bounds.Width - 8), ($e.Bounds.Height - 1))
+    [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $e.SubItem.Text, $e.Item.Font, $r, $fore, $flags)
+    $pen = New-Object System.Drawing.Pen $script:ruleColor
+    $e.Graphics.DrawLine($pen, $e.Bounds.Left, $e.Bounds.Bottom - 1, $e.Bounds.Right, $e.Bounds.Bottom - 1)
+    $pen.Dispose()
+})
+
+function Update-ColumnFit {
+    <#
+        Give the leftover width to the name column so the two columns fill the
+        list exactly - the fixed widths otherwise leave a headerless strip on
+        the right. Re-entrant guard because setting a width raises Resize again.
+    #>
+    if ($script:fitting) { return }
+    $script:fitting = $true
+    try {
+        $avail = $list.ClientSize.Width
+        # A scrollbar eats into the client width; the last row hanging past the
+        # bottom is the plainest way to know one is there.
+        if ($list.Items.Count -gt 0 -and
+            $list.Items[$list.Items.Count - 1].Bounds.Bottom -gt $list.ClientSize.Height) {
+            $avail -= [System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth
+        }
+        $w = $avail - $list.Columns[1].Width
+        if ($w -ge 120) { $list.Columns[0].Width = $w }
+    } finally { $script:fitting = $false }
+}
+$list.Add_Resize({ Update-ColumnFit })
+
 $form.Controls.Add($list)
 
 # What the throttle currently reports, so the matching row(s) can be shown as
@@ -291,17 +378,26 @@ function Update-Highlight {
 }
 
 function Update-List {
-    param([string]$SelectName)
+    <#
+        -SelectIndex re-selects by position, -SelectName by name. Moves and the
+        A-Z sort must use the index: they care about where a row landed, and a
+        name lookup would pick the wrong row if two ever shared a name.
+    #>
+    param([string]$SelectName, [int]$SelectIndex = -1)
     $list.BeginUpdate()
     $list.Items.Clear()
-    foreach ($r in $ratios) {
+    for ($i = 0; $i -lt $ratios.Count; $i++) {
+        $r = $ratios[$i]
         $item = New-Object System.Windows.Forms.ListViewItem($r.name)
         [void]$item.SubItems.Add([string]$r.ratio)
         [void]$list.Items.Add($item)
-        if ($SelectName -and $r.name -eq $SelectName) { $item.Selected = $true; $item.EnsureVisible() }
+        $hit = if ($SelectIndex -ge 0) { $i -eq $SelectIndex } else { $SelectName -and $r.name -eq $SelectName }
+        if ($hit) { $item.Selected = $true; $item.EnsureVisible() }
     }
     Update-Highlight
     $list.EndUpdate()
+    Update-ColumnFit
+    Update-ButtonState
 }
 
 function New-Button {
@@ -319,7 +415,7 @@ function New-Button {
 
 function Show-EntryDialog {
     <# Add/edit prompt. Returns a hashtable or $null if cancelled. #>
-    param([string]$Name = '', [int]$Ratio = 75, [string]$Title = 'Add aircraft')
+    param([string]$Name = '', [int]$Ratio = 75, [string]$Title = 'Add aircraft', [switch]$LockName)
 
     $d = New-Object System.Windows.Forms.Form
     $d.Text = $Title
@@ -346,6 +442,14 @@ function Show-EntryDialog {
     $l2.Size = New-Object System.Drawing.Size(360, 34)
     $l2.ForeColor = [System.Drawing.Color]::DimGray
     $d.Controls.Add($l2)
+
+    if ($LockName) {
+        $tb.ReadOnly  = $true
+        $tb.TabStop   = $false
+        $tb.BackColor = [System.Drawing.SystemColors]::Control
+        $l2.Text = 'NONE is the fallback for anything unmatched, so its name is fixed. Its ratio is yours to set.'
+        $d.Add_Shown({ $num.Select() })
+    }
 
     $l3 = New-Object System.Windows.Forms.Label
     $l3.Text = 'Ratio %'
@@ -389,6 +493,32 @@ function Get-Selected {
     return ($ratios | Where-Object { $_.name -eq $name } | Select-Object -First 1)
 }
 
+function Get-MoveFloor {
+    <#
+        NONE is the fallback rather than an aircraft, so it is pinned to the top
+        and never moves. Everything else reorders within the rows beneath it.
+        A table with no NONE entry has no pinned row and starts at 0.
+    #>
+    if ($ratios.Count -gt 0 -and $ratios[0].name -ieq 'NONE') { return 1 }
+    return 0
+}
+
+function Move-Selected {
+    <# Shift the selected row one position, keeping the selection on it. #>
+    param([Parameter(Mandatory)][int]$Delta)
+
+    if ($list.SelectedIndices.Count -eq 0) { return }
+    $from = $list.SelectedIndices[0]
+    $to   = $from + $Delta
+    $floor = Get-MoveFloor
+    if ($from -lt $floor -or $to -lt $floor -or $to -ge $ratios.Count) { return }
+
+    $row = $ratios[$from]
+    $ratios.RemoveAt($from)
+    $ratios.Insert($to, $row)
+    Update-List -SelectIndex $to
+}
+
 [void](New-Button 'Add' 54 {
     $r = Show-EntryDialog
     if (-not $r) { return }
@@ -404,23 +534,52 @@ function Get-Selected {
 $editAction = {
     $sel = Get-Selected
     if (-not $sel) { return }
-    $r = Show-EntryDialog -Name $sel.name -Ratio $sel.ratio -Title 'Edit aircraft'
+    $isNone = $sel.name -ieq 'NONE'
+    $r = Show-EntryDialog -Name $sel.name -Ratio $sel.ratio -Title 'Edit aircraft' -LockName:$isNone
     if (-not $r) { return }
+    # The fallback's name is fixed - renaming it away would remove it as surely
+    # as deleting it - so only the ratio comes back from the dialog.
+    if ($isNone) { $r.name = $sel.name }
+    # Same clash rule as Add. The entry being edited is skipped by reference, so
+    # renaming something to itself - or just changing its case - is not a clash.
+    $clash = $ratios | Where-Object { -not [object]::ReferenceEquals($_, $sel) -and $_.name -ieq $r.name } | Select-Object -First 1
+    if ($clash) {
+        [void][System.Windows.Forms.MessageBox]::Show($form, "'$($r.name)' is already in the list.", 'Already there', 'OK', 'Warning')
+        return
+    }
     $sel.name = $r.name; $sel.ratio = $r.ratio
     Update-List -SelectName $r.name
 }
-[void](New-Button 'Edit' 92 $editAction 'Change the selected entry')
+$btnEdit = New-Button 'Edit' 92 $editAction 'Change the selected entry'
 
-[void](New-Button 'Delete' 130 {
+$btnDelete = New-Button 'Delete' 130 {
     $sel = Get-Selected
     if (-not $sel) { return }
+    if ($sel.name -ieq 'NONE') { return }
     $answer = [System.Windows.Forms.MessageBox]::Show($form, "Remove '$($sel.name)' from the table?", 'Remove entry', 'YesNo', 'Question')
     if ($answer -ne 'Yes') { return }
     $ratios.Remove($sel)
     Update-List
-} 'Remove the selected entry')
+} 'Remove the selected entry'
 
-$btnActivate = New-Button 'Activate' 180 {
+$btnUp = New-Button 'Move Up' 168 { Move-Selected -Delta -1 } 'Move the selected entry one row up'
+
+$btnDown = New-Button 'Move Down' 206 { Move-Selected -Delta 1 } 'Move the selected entry one row down'
+
+[void](New-Button 'A-Z' 244 {
+    if ($ratios.Count -lt 2) { return }
+    # NONE sorts to the top rather than under N, and this is also the only way
+    # to get it back there if an older config has it somewhere in the middle.
+    $none = @($ratios | Where-Object { $_.name -ieq 'NONE' })
+    $rest = @($ratios | Where-Object { $_.name -ine 'NONE' } | Sort-Object { $_.name })
+    $keep = if ($list.SelectedIndices.Count -gt 0) { $ratios[$list.SelectedIndices[0]] } else { $null }
+    $ratios.Clear()
+    foreach ($r in $none) { [void]$ratios.Add($r) }
+    foreach ($r in $rest) { [void]$ratios.Add($r) }
+    if ($keep) { Update-List -SelectIndex $ratios.IndexOf($keep) } else { Update-List }
+} 'Sort the table A-Z, keeping NONE at the top')
+
+$btnActivate = New-Button 'Activate' 294 {
     $sel = Get-Selected
     if (-not $sel) { return }
     $form.Cursor = 'WaitCursor'
@@ -438,10 +597,10 @@ $btnActivate = New-Button 'Activate' 180 {
     } finally { $form.Cursor = 'Default' }
 } 'Apply this ratio to the throttle now'
 
-[void](New-Button 'Unset' 218 {
+[void](New-Button 'Restore Default' 332 {
     $answer = [System.Windows.Forms.MessageBox]::Show($form,
-        "Clear the ratio on the throttle?`r`n`r`nThe detent goes back to how it ships, with no afterburner mapping. Your table is not touched, and the detent calibration is left alone.",
-        'Unset the throttle', 'YesNo', 'Question')
+        "Restore the throttle to how it ships?`r`n`r`nThe detent goes back to having no afterburner mapping. Your table is not touched, and the detent calibration is left alone.",
+        'Restore default', 'YesNo', 'Question')
     if ($answer -ne 'Yes') { return }
     $form.Cursor = 'WaitCursor'
     try {
@@ -450,11 +609,28 @@ $btnActivate = New-Button 'Activate' 180 {
             [void][System.Windows.Forms.MessageBox]::Show($form, 'Could not reach the throttle.', 'Throttle not found', 'OK', 'Warning')
         } else { Refresh-Device }
     } catch {
-        [void][System.Windows.Forms.MessageBox]::Show($form, $_.Exception.Message, 'Could not clear the ratio', 'OK', 'Error')
+        [void][System.Windows.Forms.MessageBox]::Show($form, $_.Exception.Message, 'Could not restore the default', 'OK', 'Error')
     } finally { $form.Cursor = 'Default' }
-} 'Clear the ratio so the throttle behaves as it ships')
+} 'Put the throttle back to how it ships, with no ratio applied')
 
-[void](New-Button 'Refresh' 262 { Refresh-Device } 'Re-read the value currently on the throttle')
+[void](New-Button 'Refresh' 370 { Refresh-Device } 'Re-read the value currently on the throttle')
+
+function Update-ButtonState {
+    <# Every row-scoped button is dead without a selection, so none stay lit. #>
+    $i = if ($list.SelectedIndices.Count -gt 0) { $list.SelectedIndices[0] } else { -1 }
+    $has = $i -ge 0
+    # NONE is what every unmatched aircraft falls back to, so it stays put and
+    # stays in the table. Its ratio is still editable.
+    $isNone = $has -and $ratios[$i].name -ieq 'NONE'
+    $btnEdit.Enabled = $has
+    $btnDelete.Enabled = $has -and -not $isNone
+    $btnActivate.Enabled = $has
+
+    $floor = Get-MoveFloor
+    $btnUp.Enabled   = $has -and $i -gt $floor
+    $btnDown.Enabled = $has -and $i -ge $floor -and $i -lt ($ratios.Count - 1)
+}
+$list.Add_SelectedIndexChanged({ Update-ButtonState })
 
 function Refresh-Device {
     $lblDevice.Text = 'Reading the throttle...'
@@ -545,6 +721,17 @@ Update-List
 $form.Add_Shown({
     $form.Activate()
     Refresh-Device
+
+    # Say so, rather than letting a row the user hand-edited just disappear.
+    if ($skipped.Count -gt 0) {
+        $what = if ($skipped.Count -eq 1) { 'entry whose ratio is' } else { 'entries whose ratios are' }
+        [void][System.Windows.Forms.MessageBox]::Show($form,
+            ("config.json has $($skipped.Count) $what not a whole number from 0 to 100:`r`n`r`n" +
+             (($skipped | ForEach-Object { "    $_" }) -join "`r`n") +
+             "`r`n`r`nThose rows are not listed here and are never sent to the throttle. " +
+             "Correct them in config.json, or save from this window to drop them for good."),
+            'Entries ignored', 'OK', 'Warning')
+    }
 
     if ($cfg.PSObject.Properties['checkForUpdates'] -and -not $cfg.checkForUpdates) { return }
     $latest = Get-LatestRelease

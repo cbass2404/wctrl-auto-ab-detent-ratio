@@ -133,6 +133,12 @@ Add, edit and delete aircraft, and hit **Activate** to push a ratio straight to 
 throttle so you can feel it without launching DCS. Edits apply to a running DCS within a
 couple of seconds, so you can tune from the cockpit.
 
+**Move Up** and **Move Down** reorder the selected row, and **A-Z** sorts the whole table
+by name. Order is yours to arrange — the table is read top to bottom and saved in the
+order you see. **`NONE`** is the exception: it is pinned to the top and cannot be moved,
+deleted or renamed, because it is the fallback every unmatched aircraft lands on. Its
+ratio is still yours to edit — that is the only part of it Edit will change.
+
 The name is matched as a **case-insensitive substring** of the DCS aircraft name, so
 `FA-18` covers `FA-18C_hornet`. On several matches the longest name wins. **`NONE` is the
 fallback** for anything unmatched — keep it in the list.
@@ -140,6 +146,12 @@ fallback** for anything unmatched — keep it in the list.
 > Edit ratios through this window rather than by hand. `config.json` now lives in the
 > `lib` folder with the code that owns it, and hand edits are an easy way to end up with
 > a file the tool cannot read.
+>
+> A ratio that is not a whole number from 0 to 100 — negative, over 100, fractional,
+> missing or not a number at all — is **ignored rather than guessed at**, because the
+> throttle will not accept it. The editor leaves that row out of the table and says which
+> ones it dropped; the helper skips it and logs it, keeping the rest of your table. Saving
+> from the editor removes the ignored rows from `config.json`.
 
 ### 4. Per-aircraft DCS settings
 
@@ -251,8 +263,10 @@ Then put a distinctive part of your throttle's name into `deviceNameIncludes` in
 and WinCtrl in about 18 months, and the brand is baked into the product string.
 
 **An aircraft gets the wrong ratio.**
-The longest matching entry wins. Add a more specific entry in the ratio editor, or use
-`overrides` in `lib\config.json` to pin an exact DCS aircraft name to a ratio.
+The longest matching entry wins, and a tie in length goes to whichever row sits higher.
+Add a more specific entry in the ratio editor, move the entry you want above the one it
+ties with, or use `overrides` in `lib\config.json` to pin an exact DCS aircraft name to a
+ratio.
 
 **Reporting a bug.** Include the version — it is in the folder name, the hook filename,
 and the first line of the log.
@@ -353,6 +367,10 @@ If the filter matches nothing the helper logs what it _did_ find and touches no 
    entry names you typed in SimAppPro match regardless of case — `f-4e` matches
    `F-4E-45MC` exactly as `F-4E` does.
 3. On multiple matches the **longest entry name wins**, so `F-4E` beats a hypothetical `F-4`.
+   On a **tie in length, the row nearer the top of the table wins** — so if you keep both
+   `FA-18C` and `hornet`, whichever you put higher is the one that decides an
+   `FA-18C_hornet`. Use **Move Up** in the ratio editor to settle it. Bear in mind that
+   **A-Z** re-sorts the table and can therefore flip a tie you had arranged by hand.
 4. `NONE` never matches by name — it is the fallback when nothing else hits.
 5. If there is no `NONE` entry, fall back to `restoreRatio` (75, the throttle's neutral value).
 
@@ -475,6 +493,8 @@ already had is written back over it. So:
 - an aircraft you added yourself is kept, in the position you put it;
 - a default aircraft this release adds that you have never had is appended to the end of
   your table;
+- `NONE` is moved to the top of the table if it is not already there, so every installed
+  config has it in the same known place;
 - a setting this release adds arrives at its default, since you have no opinion on it yet;
 - a setting the new version no longer ships is dropped, because the code that read it is
   gone.

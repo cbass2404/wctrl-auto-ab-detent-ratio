@@ -134,9 +134,27 @@ function Get-RatioTable {
         try {
             $j = Get-Content $path -Raw | ConvertFrom-Json
             if ($j.ratios) {
-                $t = @($j.ratios | Where-Object { $_.name } | ForEach-Object {
-                    @{ name = [string]$_.name; ratio = [int]$_.ratio }
-                })
+                # A ratio that is not a whole 0..100 is dropped, not clamped or
+                # guessed at: it cannot be written to the throttle. Each row is
+                # parsed on its own so one hand-edited mistake costs that entry
+                # and not the entire table - [int] on a non-numeric string
+                # throws, and the catch below would fall back to the defaults,
+                # quietly discarding every ratio the user had tuned.
+                $t   = @()
+                $bad = @()
+                foreach ($e in @($j.ratios | Where-Object { $_.name })) {
+                    $n = 0
+                    if ([int]::TryParse([string]$e.ratio, [ref]$n) -and $n -ge 0 -and $n -le 100) {
+                        $t += @{ name = [string]$e.name; ratio = $n }
+                    } else {
+                        $bad += "$($e.name)=$($e.ratio)"
+                    }
+                }
+                if ($bad.Count -gt 0) {
+                    Write-Log ("ignoring $($bad.Count) ratio entr" +
+                               $(if ($bad.Count -eq 1) { 'y' } else { 'ies' }) +
+                               " that are not a whole 0-100: $($bad -join ', ')") 'warn'
+                }
                 if ($t.Count -gt 0) {
                     $script:TableStamp = Get-ConfigStamp
                     Write-Log "ratio table: $($t.Count) entries"
