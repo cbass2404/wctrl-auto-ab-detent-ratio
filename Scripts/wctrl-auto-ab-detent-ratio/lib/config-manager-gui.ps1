@@ -406,6 +406,13 @@ $editAction = {
     if (-not $sel) { return }
     $r = Show-EntryDialog -Name $sel.name -Ratio $sel.ratio -Title 'Edit aircraft'
     if (-not $r) { return }
+    # Same clash rule as Add. The entry being edited is skipped by reference, so
+    # renaming something to itself - or just changing its case - is not a clash.
+    $clash = $ratios | Where-Object { -not [object]::ReferenceEquals($_, $sel) -and $_.name -ieq $r.name } | Select-Object -First 1
+    if ($clash) {
+        [void][System.Windows.Forms.MessageBox]::Show($form, "'$($r.name)' is already in the list.", 'Already there', 'OK', 'Warning')
+        return
+    }
     $sel.name = $r.name; $sel.ratio = $r.ratio
     Update-List -SelectName $r.name
 }
