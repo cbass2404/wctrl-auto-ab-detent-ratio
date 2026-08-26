@@ -15,11 +15,12 @@
       - none found                    -> asks for the path
       - not interactive               -> pass -SavedGames explicitly
 
-        .\install.cmd                        # install / update; keeps config.json
+        .\install.cmd                        # install / update; merges config.json
         .\install.cmd -All                   # every DCS folder found, no prompt
         .\install.cmd -SavedGames <p>[,<p>]  # explicit target(s)
         .\install.cmd -WhatIf                # show what would change, touch nothing
-        .\install.cmd -ForceConfig           # also replace config.json (backed up)
+        .\install.cmd -ForceConfig           # discard config.json, use the shipped
+                                             # defaults instead (backed up first)
         .\install.cmd -NoShortcut            # skip the Start Menu shortcut
         .\install.cmd -Uninstall             # remove the deployed copy
 #>
@@ -282,60 +283,214 @@ function Get-PriorInstalls {
     return $out
 }
 
-function Get-RatiosFromConfig {
+function Get-JsonValueSpan {
     <#
-        Pull just the ratios out of a previous config.json. This is the only key
-        that survives an upgrade: everything else is free to change shape between
-        versions, which is the point of installing each version into its own
-        folder rather than merging into the last one.
+        Locate the span of a top-level key's VALUE inside a config.json, as
+        offsets into the raw text. Working on the text rather than on a parsed
+        object is what lets an upgrade keep the shipped comments, key order and
+        hand-tuned alignment: only the spans that actually change get spliced.
+
+        Returns @{ Start; End } (End exclusive) or $null when the key is absent.
     #>
-    param([string]$ConfigPath)
-    try {
-        $j = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-        if (-not $j.ratios) { return @() }
-        return @($j.ratios | Where-Object { $_.name } | ForEach-Object {
-            [pscustomobject]@{ name = [string]$_.name; ratio = [int]$_.ratio }
-        })
-    } catch { return @() }
+    param([string]$Raw, [string]$Key)
+
+    $m = [regex]::Match($Raw, '(?m)^\s*"' + [regex]::Escape($Key) + '"\s*:\s*')
+    if (-not $m.Success) { return $null }
+    $i = $m.Index + $m.Length
+    if ($i -ge $Raw.Length) { return $null }
+
+    $c = $Raw[$i]
+    if ($c -eq '{' -or $c -eq '[') {
+        # Walk to the matching close, tracking string state so a bracket inside
+        # a string - or an escaped quote - does not throw the depth count off.
+        $openCh  = $c
+        $closeCh = if ($c -eq '{') { '}' } else { ']' }
+        $depth = 0; $inStr = $false; $esc = $false
+        for ($j = $i; $j -lt $Raw.Length; $j++) {
+            $ch = $Raw[$j]
+            if ($inStr) {
+                if ($esc) { $esc = $false }
+                elseif ($ch -eq '\') { $esc = $true }
+                elseif ($ch -eq '"') { $inStr = $false }
+                continue
+            }
+            if ($ch -eq '"') { $inStr = $true; continue }
+            if ($ch -eq $openCh)  { $depth++; continue }
+            if ($ch -eq $closeCh) { $depth--; if ($depth -eq 0) { return @{ Start = $i; End = $j + 1 } } }
+        }
+        return $null
+    }
+    if ($c -eq '"') {
+        $esc = $false
+        for ($j = $i + 1; $j -lt $Raw.Length; $j++) {
+            $ch = $Raw[$j]
+            if ($esc) { $esc = $false; continue }
+            if ($ch -eq '\') { $esc = $true; continue }
+            if ($ch -eq '"') { return @{ Start = $i; End = $j + 1 } }
+        }
+        return $null
+    }
+    # Number, true, false or null: runs to the next comma, close or line end.
+    for ($j = $i; $j -lt $Raw.Length; $j++) {
+        if ($Raw[$j] -match '[,\}\r\n]') { return @{ Start = $i; End = $j } }
+    }
+    return $null
 }
 
-function Set-ConfigRatios {
+function Format-RatioRows {
     <#
-        Replace the "ratios" array in a config.json, rewriting only that span so
-        the shipped comments, key order and formatting survive untouched.
-        Mirrors Update-FallbackRatios in helper.ps1.
+        Render a ratio table as the aligned rows config.json ships with, so a
+        merged file is indistinguishable from a hand-edited one. The column
+        width follows the longest name rather than being fixed, so one long
+        entry does not knock the rest out of line.
     #>
-    param([string]$ConfigPath, [array]$Ratios)
-    if ($Ratios.Count -eq 0) { return $false }
+    param([array]$Ratios)
+    $w = 9
+    foreach ($r in $Ratios) {
+        $n = ([string]$r.name).Length + 3
+        if ($n -gt $w) { $w = $n }
+    }
+    # Built up front: -f binds tighter than +, so composing it inline would
+    # format the trailing fragment instead of the whole template.
+    $fmt  = '        {{ "name": {0,' + (-$w) + '} "ratio": {1} }}'
+    $rows = $Ratios | ForEach-Object {
+        $fmt -f ('"' + $_.name + '",'), [int]$_.ratio
+    }
+    return "[" + [Environment]::NewLine + ($rows -join ("," + [Environment]::NewLine)) + [Environment]::NewLine + "    ]"
+}
 
-    $raw = [IO.File]::ReadAllText($ConfigPath)
-    $m = [regex]::Match($raw, '"ratios"\s*:\s*\[')
-    if (-not $m.Success) { return $false }
+function Merge-UserConfig {
+    <#
+        Fold a user's config.json into the one this version ships.
 
-    $open  = $m.Index + $m.Length - 1
-    $depth = 0; $inStr = $false; $esc = $false; $end = -1
-    for ($i = $open; $i -lt $raw.Length; $i++) {
-        $c = $raw[$i]
-        if ($inStr) {
-            if ($esc) { $esc = $false }
-            elseif ($c -eq '') { $esc = $true }
-            elseif ($c -eq '"') { $inStr = $false }
+        The shipped file is the skeleton: it carries the current comments, any
+        setting added since the user's version, and the current default ratio
+        table. Every value the user already has is then spliced back over it, so
+        an upgrade is purely additive - nothing they tuned is touched, and the
+        only thing that changes is that genuinely new ratio entries and new
+        settings appear. When the user is already current the result is
+        byte-identical to what is on disk and the caller writes nothing.
+
+        Keys are matched by name. A setting the user's version had that this one
+        no longer ships is dropped, because the code that read it is gone.
+        _comment keys always come from the shipped file: they are documentation
+        rather than user data, and they go stale otherwise.
+
+        Returns @{ Text; AddedRatios; AddedKeys } or $null if either file cannot
+        be read, which leaves the caller with the shipped config untouched.
+    #>
+    param([string]$ShippedPath, [string]$UserPath)
+
+    try {
+        $shippedRaw = [IO.File]::ReadAllText($ShippedPath)
+        $userRaw    = [IO.File]::ReadAllText($UserPath)
+        $shipped    = $shippedRaw | ConvertFrom-Json
+        $user       = $userRaw    | ConvertFrom-Json
+    } catch {
+        return $null
+    }
+    if (-not $shipped -or -not $user) { return $null }
+
+    $edits       = @()   # spans of the shipped text to overwrite
+    $addedRatios = @()
+    $addedKeys   = @()
+
+    foreach ($p in $shipped.PSObject.Properties) {
+        $key = $p.Name
+        if ($key -like '_comment*') { continue }
+
+        $userProp = $user.PSObject.Properties[$key]
+        if ($null -eq $userProp) { $addedKeys += $key; continue }
+
+        $span = Get-JsonValueSpan -Raw $shippedRaw -Key $key
+        if (-not $span) { continue }
+
+        if ($key -eq 'ratios') {
+            # The one key that merges rather than being taken wholesale: the
+            # user's rows win and keep their order and their values, then any
+            # name this version ships that they have never seen is appended.
+            $userRatios = @($userProp.Value | Where-Object { $_.name } | ForEach-Object {
+                [pscustomobject]@{ name = [string]$_.name; ratio = [int]$_.ratio }
+            })
+            if ($userRatios.Count -eq 0) { continue }
+
+            $have = @{}
+            foreach ($r in $userRatios) { $have[$r.name.ToLowerInvariant()] = $true }
+
+            $merged = @($userRatios)
+            foreach ($s in @($shipped.ratios | Where-Object { $_.name })) {
+                if ($have.ContainsKey(([string]$s.name).ToLowerInvariant())) { continue }
+                $merged      += [pscustomobject]@{ name = [string]$s.name; ratio = [int]$s.ratio }
+                $addedRatios += [string]$s.name
+            }
+            $edits += @{ Start = $span.Start; End = $span.End; Text = (Format-RatioRows -Ratios $merged) }
             continue
         }
-        if ($c -eq '"') { $inStr = $true; continue }
-        if ($c -eq '[') { $depth++; continue }
-        if ($c -eq ']') { $depth--; if ($depth -eq 0) { $end = $i; break } }
-    }
-    if ($end -lt 0) { return $false }
 
-    $rows = $Ratios | ForEach-Object {
-        '        {{ "name": {0,-9} "ratio": {1} }}' -f ('"' + $_.name + '",'), [int]$_.ratio
+        # Everything else is the user's, verbatim. Splicing their raw text
+        # rather than a re-serialised value keeps objects, arrays and string
+        # quoting exactly as they wrote them.
+        $userSpan = Get-JsonValueSpan -Raw $userRaw -Key $key
+        if (-not $userSpan) { continue }
+        $edits += @{
+            Start = $span.Start
+            End   = $span.End
+            Text  = $userRaw.Substring($userSpan.Start, $userSpan.End - $userSpan.Start)
+        }
     }
-    $body = "[" + [Environment]::NewLine + ($rows -join ("," + [Environment]::NewLine)) + [Environment]::NewLine + "    ]"
-    $updated = $raw.Substring(0, $open) + $body + $raw.Substring($end + 1)
 
-    try { [void]($updated | ConvertFrom-Json) } catch { return $false }
-    [IO.File]::WriteAllText($ConfigPath, $updated, (New-Object Text.UTF8Encoding($false)))
+    # Apply back to front so the earlier offsets stay valid.
+    $out = $shippedRaw
+    foreach ($e in ($edits | Sort-Object -Property Start -Descending)) {
+        $out = $out.Substring(0, $e.Start) + $e.Text + $out.Substring($e.End)
+    }
+
+    try { [void]($out | ConvertFrom-Json) } catch { return $null }
+    return @{ Text = $out; AddedRatios = @($addedRatios); AddedKeys = @($addedKeys) }
+}
+
+function Write-MergedConfig {
+    <#
+        Merge $UserPath into the shipped config and write the result to
+        $DestPath. Writes nothing when the merge is a no-op, so reinstalling the
+        same version neither churns the file nor leaves a pointless backup.
+
+        Returns $true when the user's settings ended up in $DestPath, whether or
+        not anything actually needed writing.
+    #>
+    param([string]$ShippedPath, [string]$UserPath, [string]$DestPath, [string]$Source, [switch]$Backup)
+
+    $merged = Merge-UserConfig -ShippedPath $ShippedPath -UserPath $UserPath
+    if (-not $merged) {
+        Write-Warning "  could not read $UserPath - leaving the shipped config.json in place"
+        return $false
+    }
+
+    $current = ''
+    if (Test-Path -LiteralPath $DestPath) { $current = [IO.File]::ReadAllText($DestPath) }
+    if ($current -eq $merged.Text) {
+        Write-Host '  kept your config.json (already current)'
+        return $true
+    }
+
+    $what = @()
+    if ($merged.AddedRatios.Count) { $what += "added $($merged.AddedRatios.Count) new aircraft: $($merged.AddedRatios -join ', ')" }
+    if ($merged.AddedKeys.Count)   { $what += "added $($merged.AddedKeys.Count) new setting(s): $($merged.AddedKeys -join ', ')" }
+    if ($what.Count -eq 0)         { $what += 'kept every setting you had' }
+
+    if (-not $PSCmdlet.ShouldProcess($DestPath, "Merge config.json from $Source - " + ($what -join '; '))) {
+        return $true
+    }
+
+    if ($Backup -and (Test-Path -LiteralPath $DestPath)) {
+        $bak = "$DestPath.bak-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
+        Copy-Item -LiteralPath $DestPath -Destination $bak -Force
+        Write-Host "  backed up config.json -> $(Split-Path $bak -Leaf)"
+    }
+    [IO.File]::WriteAllText($DestPath, $merged.Text, (New-Object Text.UTF8Encoding($false)))
+
+    Write-Host "  carried your config.json forward from $Source"
+    foreach ($w in $what) { Write-Host "    - $w" }
     return $true
 }
 
@@ -456,6 +611,15 @@ function Install-ToTarget {
 
         if ($rel -ieq ('lib' + $sep + 'config.json') -and $configExists) {
             if (-not $ForceConfig) {
+                # Reinstall over an existing config: merge rather than skip, so
+                # aircraft and settings added since that file was written show
+                # up. Everything already in it is preserved, so this is a no-op
+                # unless this package genuinely ships something new.
+                if (Write-MergedConfig -ShippedPath $f.FullName -UserPath $destConfig `
+                                       -DestPath $destConfig -Source 'your existing install' -Backup) {
+                    $script:carriedRatios = $true
+                    continue
+                }
                 Write-Host '  kept existing config.json (-ForceConfig to replace)'
                 continue
             }
@@ -478,18 +642,13 @@ function Install-ToTarget {
 
     # Installs before lib\ kept config.json at the top of this same folder, so
     # an upgrade in place finds no lib\config.json and would otherwise replace
-    # the user's table with the shipped defaults - and leave the old file
-    # orphaned where nothing reads it. Lift the ratios across, then remove it.
+    # the user's settings with the shipped defaults - and leave the old file
+    # orphaned where nothing reads it. Merge it across, then remove it.
     $legacyConfig = Join-Path $destDir 'config.json'
     if (-not $configExists -and (Test-Path -LiteralPath $legacyConfig)) {
-        $legacyRatios = @(Get-RatiosFromConfig -ConfigPath $legacyConfig)
-        if ($legacyRatios.Count -gt 0) {
-            if ($PSCmdlet.ShouldProcess($destConfig, "Carry over $($legacyRatios.Count) ratios from the previous layout")) {
-                if (Set-ConfigRatios -ConfigPath $destConfig -Ratios $legacyRatios) {
-                    $script:carriedRatios = $true
-                    Write-Host "  carried over $($legacyRatios.Count) ratios from the previous layout"
-                }
-            }
+        if (Write-MergedConfig -ShippedPath $destConfig -UserPath $legacyConfig `
+                               -DestPath $destConfig -Source 'the previous layout') {
+            $script:carriedRatios = $true
         }
     }
     if (Test-Path -LiteralPath $legacyConfig) {
@@ -505,20 +664,17 @@ function Install-ToTarget {
         }
     }
 
-    # Carry the ratio table forward from whichever prior install has one. Only
-    # for a fresh folder: a same-version reinstall keeps the config it has.
+    # Carry the config forward from whichever prior install has one. Only for a
+    # fresh folder: a same-version reinstall has already merged in place above.
     if (-not $configExists -and -not $script:carriedRatios) {
         foreach ($prior in $priors) {
             # Installs before lib\ kept config.json at the top of the folder.
             $priorCfg = Join-Path $prior ('lib' + $sep + 'config.json')
             if (-not (Test-Path -LiteralPath $priorCfg)) { $priorCfg = Join-Path $prior 'config.json' }
-            $ratios = @(Get-RatiosFromConfig -ConfigPath $priorCfg)
-            if ($ratios.Count -eq 0) { continue }
-            if ($PSCmdlet.ShouldProcess($destConfig, "Carry over $($ratios.Count) ratios from $(Split-Path $prior -Leaf)")) {
-                if (Set-ConfigRatios -ConfigPath $destConfig -Ratios $ratios) {
-                    $script:carriedRatios = $true
-                    Write-Host "  carried over $($ratios.Count) ratios from $(Split-Path $prior -Leaf)"
-                }
+            if (-not (Test-Path -LiteralPath $priorCfg)) { continue }
+            if (Write-MergedConfig -ShippedPath $destConfig -UserPath $priorCfg `
+                                   -DestPath $destConfig -Source (Split-Path $prior -Leaf)) {
+                $script:carriedRatios = $true
             }
             break
         }
