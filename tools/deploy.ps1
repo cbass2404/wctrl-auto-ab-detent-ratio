@@ -423,6 +423,17 @@ function Merge-UserConfig {
                 $merged      += [pscustomobject]@{ name = [string]$s.name; ratio = [int]$s.ratio }
                 $addedRatios += [string]$s.name
             }
+
+            # NONE is the fallback rather than an aircraft, and the editor pins
+            # it to the top. Hoist it there on the way through so every config
+            # this installer writes has the same known shape, whatever order an
+            # older one happened to be in. A table that already has it first
+            # comes through this step unchanged.
+            $none = @($merged | Where-Object { $_.name -ieq 'NONE' })
+            if ($none.Count) {
+                $merged = @($none) + @($merged | Where-Object { $_.name -ine 'NONE' })
+            }
+
             $edits += @{ Start = $span.Start; End = $span.End; Text = (Format-RatioRows -Ratios $merged) }
             continue
         }
