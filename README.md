@@ -212,7 +212,7 @@ The tool features a fully automated installer and update manager designed to req
 
 - **Automatic Path Discovery:** On a fresh install, the script uses the Windows Known Folder API to independently locate your active `Saved Games\DCS` folder structure, creating missing script directories and placing the native Lua hooks automatically.
 - **Non-Blocking Version Checking:** When you launch the configuration editor, it executes a single async lookup against GitHub. If a newer build exists, it displays a gentle update notice with a link, never blocking your immediate use or gameplay.
-- **Lossless Migration Architecture:** When upgrading, the installer handles everything: it creates a backup, safely extracts the new release, migrates your custom `config.json` aircraft ratios byte-for-byte, and completely purges stale legacy hook versions to prevent script conflicts.
+- **Lossless Migration Architecture:** When upgrading, the installer handles everything: it creates a backup, safely extracts the new release, merges your `config.json` forward so every ratio and setting you tuned survives while newly shipped aircraft are added to your table, and completely purges stale legacy hook versions to prevent script conflicts.
 - **Native Windows Workspace Integration:** Generates standard Start Menu shortcuts dynamically during execution so your app is always searchable directly via the Windows key without browsing system directories.
 
 ## Updating and uninstalling
@@ -460,15 +460,33 @@ and its hook — two hooks loaded at once would fire every event twice. Only one
 carried across an upgrade:
 
 ```
-carried over 11 ratios from wctrl-auto-ab-detent-ratio-0.1-alpha
+carried your config.json forward from wctrl-auto-ab-detent-ratio-0.1-alpha
+  - added 1 new aircraft: Su-27
 removed previous wctrl-auto-ab-detent-ratio-0.1-alpha
 removed previous hook wctrl-auto-ab-detent-ratio-0.1-alpha-hook.lua
 ```
 
-**`ratios` is the only key that migrates.** Every other setting is re-created from the new
-version's shipped `config.json`, which means config keys can be added, renamed or dropped
-between releases without a migration path — the new version simply starts from its own
-defaults. That is the point of versioned folders rather than upgrading in place.
+**Every setting migrates, and an upgrade only ever adds.** The new version's shipped
+`config.json` is used as the skeleton — it brings the current comments, the current default
+ratio table, and any setting introduced since your version — and then every value you
+already had is written back over it. So:
+
+- a ratio you tuned keeps your number;
+- an aircraft you added yourself is kept, in the position you put it;
+- a default aircraft this release adds that you have never had is appended to the end of
+  your table;
+- a setting this release adds arrives at its default, since you have no opinion on it yet;
+- a setting the new version no longer ships is dropped, because the code that read it is
+  gone.
+
+If the release changes nothing about the config, your file is carried across byte-for-byte.
+Reinstalling the same version merges too, and writes nothing at all when there is nothing
+new to add.
+
+> One consequence worth knowing: the installer cannot tell an aircraft you **deleted** from
+> one you have simply never been offered, so a default entry you remove comes back on the
+> next upgrade that ships it. Set it to a ratio you like rather than deleting it, and it
+> will be left alone.
 
 The log file stays unversioned (`Logs\wctrl-auto-ab-detent-ratio.log`) so it is always in
 the same place; each run records its version in the first line.
@@ -484,10 +502,11 @@ Installing is a **complete replace of the program files**, not a merge:
   once would double every event;
 - installing into a DCS folder with no `Scripts` directory works — it is created.
 
-The single exception is **`config.json`, which is yours and is kept.** It holds your
-settings and your mirrored ratio table, and anyone who has since uninstalled SimAppPro
-has no other copy of it. Use `-ForceConfig` to replace it anyway; the previous file is
-backed up to `config.json.bak-<timestamp>` first.
+The single exception is **`config.json`, which is yours and is merged rather than
+replaced.** It holds your settings and your mirrored ratio table, and anyone who has since
+uninstalled SimAppPro has no other copy of it. Use `-ForceConfig` to discard it and start
+from this version's defaults; the previous file is backed up to
+`config.json.bak-<timestamp>` first.
 
 #### Repository layout
 
