@@ -668,6 +668,39 @@
         color: var(--ink-2);
       }
 
+      .video {
+        border: 1px solid var(--rule);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+      .video-frame {
+        position: relative;
+        aspect-ratio: 16 / 9;
+        background: #000;
+      }
+      .video-frame iframe {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        display: block;
+      }
+      .video-note {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px 20px;
+        padding: 15px 18px;
+        border-top: 1px solid var(--rule);
+        font-size: 0.94rem;
+        color: var(--ink-2);
+      }
+      .video-note a {
+        white-space: nowrap;
+      }
+
       footer {
         padding: 54px 0 76px;
         border-top: 1px solid var(--rule);
@@ -1076,6 +1109,45 @@
           <span class="btn-note"
             >Setup instructions are at the top of the page.</span
           >
+        </div>
+      </div>
+    </section>
+
+    <section style="padding-top: 0">
+      <div class="wrap">
+        <div class="section-head">
+          <span class="eyebrow">See for yourself</span>
+          <h2>Watch an AI read every line of it</h2>
+        </div>
+        <p class="prose" style="color: var(--ink-2); margin-bottom: 26px">
+          You should not install a script that talks to your hardware just
+          because a stranger says it is fine. So here is the whole project
+          handed to GitHub Copilot on camera, unedited, for a security and code
+          review: what it touches, what it writes, and what it never goes near.
+        </p>
+        <div class="video">
+          <div class="video-frame">
+            <iframe
+              src="https://www.youtube.com/embed/-BpyFcq_FKo?si=GY3kFVey_Rsdb1dD"
+              title="GitHub Copilot security and code review of wctrl-auto-ab-detent-ratio"
+              loading="lazy"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerpolicy="strict-origin-when-cross-origin"
+              allowfullscreen
+            ></iframe>
+          </div>
+          <div class="video-note">
+            <span
+              >Verdict: local only, no elevation, no persistence, and the one
+              thing it writes to the throttle is the afterburner ratio.</span
+            >
+            <a
+              href="https://copilot.microsoft.com/shares/4Sg6pbMTrLedTbpu6fBuT"
+              target="_blank"
+              rel="noopener noreferrer"
+              >Read the full transcript</a
+            >
+          </div>
         </div>
       </div>
     </section>
