@@ -22,6 +22,7 @@
         .\install.cmd -ForceConfig           # discard config.json, use the shipped
                                              # defaults instead (backed up first)
         .\install.cmd -NoShortcut            # skip the Start Menu shortcut
+        .\install.cmd -Shortcut              # create it without asking
         .\install.cmd -Uninstall             # remove the deployed copy
 #>
 
@@ -31,6 +32,7 @@ param(
     [switch]$All,
     [switch]$ForceConfig,
     [switch]$NoShortcut,
+    [switch]$Shortcut,
     [switch]$Uninstall
 )
 
@@ -539,6 +541,7 @@ function New-Shortcut {
     $libDir = Join-Path (Join-Path (Join-Path $Dcs 'Scripts') $projectName) 'lib'
     $shim   = Join-Path $libDir 'run-hidden.vbs'
     if (-not (Test-Path -LiteralPath $shim)) { return }
+    $icon   = Join-Path $libDir 'app.ico'
 
     $dir = Get-StartMenuDir
     if (-not (Test-Path -LiteralPath $dir)) {
@@ -554,10 +557,55 @@ function New-Shortcut {
         $sc.Arguments        = '"' + $shim + '" config-manager-gui.ps1'
         $sc.WorkingDirectory = $libDir
         $sc.Description      = "Edit afterburner detent ratios (v$version)"
+        # Without this the entry wears wscript.exe's generic script icon, which
+        # says nothing about what it opens. Missing icon is not worth failing
+        # the shortcut over, so it is only set when the file is actually there.
+        if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
         $sc.Save()
         Write-Host "  Start Menu shortcut: $shortcutName"
     } catch {
         Write-Warning "  could not create the Start Menu shortcut: $($_.Exception.Message)"
+    }
+}
+
+function Get-ShortcutAction {
+    <#
+        Decide what happens to the Start Menu entry: 'create', 'remove', or
+        'skip' - leave whatever is there alone.
+
+        The question is asked on every install, not only the first, because
+        earlier versions created the shortcut without asking: someone who never
+        wanted one has no way to say so except here, so answering no removes the
+        entry they never agreed to. Answering yes still goes through a remove
+        and a recreate, since the target path carries the version and a shortcut
+        left pointing at the previous folder would be dead by the end of this
+        run.
+
+        -NoShortcut stays a narrower thing than "no": it skips creation and
+        leaves an existing shortcut in place. Removing what is already there is
+        a different decision, and a scripted install should not make it.
+    #>
+    if ($NoShortcut) { return 'skip' }
+    if ($Shortcut)   { return 'create' }
+
+    # -WhatIf answers yes so the dry run still reports the shortcut it would
+    # create, and a non-interactive run keeps the long-standing behaviour;
+    # -NoShortcut is the documented way to opt out of a scripted install.
+    if ($WhatIfPreference)      { return 'create' }
+    if (-not (Test-Interactive)) { return 'create' }
+
+    $existing = Test-Path -LiteralPath (Join-Path (Get-StartMenuDir) $shortcutName)
+
+    Write-Host ''
+    Write-Host 'A Start Menu shortcut opens the ratio editor without digging'
+    Write-Host 'through Saved Games. Nothing else depends on it.'
+    if ($existing) { Write-Host 'You have one now - answering no removes it.' }
+    while ($true) {
+        $ans = (Read-Host 'Add a Start Menu shortcut? (Y/n)').Trim()
+        if ([string]::IsNullOrWhiteSpace($ans)) { return 'create' }
+        if ($ans -match '^(?i)(y|yes)$')        { return 'create' }
+        if ($ans -match '^(?i)(n|no)$')         { return 'remove' }
+        Write-Warning 'Answer y or n.'
     }
 }
 
@@ -738,6 +786,113 @@ function Install-ToTarget {
     }
 }
 
+# ----------------------------------------------------------------- preflight --
+
+# Why a live DCS has to be waited out rather than worked around.
+#
+# DCS reads Scripts\Hooks\*.lua once, at process start, so nothing installed
+# while it is running takes effect before a restart. An upgrade or uninstall
+# does more than nothing, though: Install-ToTarget removes the previous
+# version's folder and hook once the new copy is down, which pulls the ground
+# out from under the hook DCS already has loaded, and the helper that hook
+# launched is live during a mission holding files in that folder open, where
+# Remove-Item has no way to succeed. Blocking up front is what lets everything
+# below treat the target as its own.
+#
+# DCS_updater.exe is deliberately not listed. It does not load hooks, and
+# blocking on it would stop an install during a routine module download.
+$dcsProcessNames = @('DCS', 'DCS_server')
+
+function Get-RunningDcs {
+    <#
+        Live DCS processes, or an empty array.
+
+        Matched on process name alone. Mapping a running DCS.exe back to a
+        particular Saved Games folder is not reliable - the install directory
+        and the Saved Games directory are unrelated paths, and a user can have
+        stable and beta - so any live DCS blocks every target.
+
+        .Path is deliberately never read: it is access-denied for a process
+        owned by another user or running elevated, and those are exactly the
+        ones this still has to see. Get-Process -Name itself does not need the
+        rights that reading .Path does.
+    #>
+    return @(Get-Process -Name $dcsProcessNames -ErrorAction SilentlyContinue)
+}
+
+function Format-RunningDcs {
+    param($Processes)
+    # Get-Process reports the name without .exe; put it back, it is what the
+    # user sees in Task Manager and in the DCS shortcut.
+    return (($Processes | ForEach-Object { "$($_.Name).exe, PID $($_.Id)" }) -join '; ')
+}
+
+function Confirm-DcsClosed {
+    <#
+        Preflight gate. Runs before targets are resolved, so a blocked run shows
+        no prompts, writes no file and touches no shortcut.
+
+        There is deliberately no override switch. Everything past this point
+        assumes it has the target folder to itself: the copy overwrites files
+        the running helper holds open, and an upgrade deletes the folder the
+        loaded hook is still resolving against. Waiting is free, since hooks
+        are read once at launch and nothing installed now takes effect before
+        a restart either way.
+
+        -WhatIf reports the condition and carries on. A dry run changes nothing,
+        and someone checking what an upgrade would do is the last person who
+        should be made to quit DCS first.
+    #>
+
+    $rechecked = $false
+
+    while ($true) {
+        $procs = Get-RunningDcs
+
+        if ($procs.Count -eq 0) {
+            if ($rechecked) { Write-Host 'DCS is closed - continuing.'; Write-Host '' }
+            return
+        }
+
+        $found = Format-RunningDcs $procs
+
+        Write-Host ''
+        Write-Host "DCS is running ($found)."
+        Write-Host ''
+        if ($Uninstall) {
+            Write-Host 'This session has the installed files open, and the helper keeps'
+            Write-Host 'writing ratios to the throttle until DCS exits.'
+        } else {
+            Write-Host 'Hooks load when DCS starts, so an install only takes effect on the'
+            Write-Host 'next launch. An update also replaces files this session has open.'
+        }
+        Write-Host ''
+
+        if ($WhatIfPreference) {
+            Write-Host 'Continuing anyway: -WhatIf only reports, it changes nothing.'
+            Write-Host ''
+            return
+        }
+
+        # The common case is a double-clicked install.cmd with DCS open on
+        # another monitor, so wait for it rather than making them start over.
+        # Nothing to wait with when there is no console.
+        if (-not (Test-Interactive)) {
+            Write-Host 'Close DCS, then run this again.'
+            Write-Host ''
+            exit 1
+        }
+
+        $ans = Read-Host 'Close DCS, then press Enter to check again, or Q to quit'
+        if ($ans -match '^(?i)\s*q') {
+            Write-Host ''
+            Write-Host 'Cancelled - nothing was changed.'
+            exit 1
+        }
+        $rechecked = $true
+    }
+}
+
 # ---------------------------------------------------------------------- main --
 
 # Source keeps the plain, unversioned names so the repo has a stable layout and
@@ -747,6 +902,10 @@ $srcHook = Join-Path $repo "Scripts\Hooks\$baseName-hook.lua"
 foreach ($p in @($srcDir, $srcHook)) {
     if (-not (Test-Path -LiteralPath $p)) { throw "Missing source '$p' - is this a complete copy of the package?" }
 }
+
+# Before anything is resolved or prompted for: a run blocked here has to leave
+# the disk exactly as it found it.
+Confirm-DcsClosed
 
 $targets = @(Resolve-Targets)
 if ($targets.Count -eq 0) {
@@ -770,11 +929,15 @@ foreach ($t in $targets) {
 # what is already there are different things.
 if ($Uninstall) {
     Remove-Shortcut
-} elseif (-not $NoShortcut) {
-    # Remove first - the shortcut points at a version-stamped path, so a stale
-    # one would survive the upgrade pointing at a folder that no longer exists.
-    Remove-Shortcut
-    New-Shortcut -Dcs $targets[0]
+} else {
+    $shortcutAction = Get-ShortcutAction
+    if ($shortcutAction -ne 'skip') {
+        # Remove first either way - the shortcut points at a version-stamped
+        # path, so a stale one would survive the upgrade pointing at a folder
+        # that no longer exists.
+        Remove-Shortcut
+        if ($shortcutAction -eq 'create') { New-Shortcut -Dcs $targets[0] }
+    }
 }
 
 if ($Uninstall) {
