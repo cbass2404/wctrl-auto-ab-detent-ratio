@@ -14,6 +14,10 @@ WWTHID*.log
 # Runtime logs
 *.log
 
+# Helper runtime state. Written on every detection, owned by the helper,
+# never shipped - a missing file correctly means "nothing detected".
+Scripts/wctrl-auto-ab-detent-ratio/lib/state.json
+
 # OS / editor
 Thumbs.db
 desktop.ini

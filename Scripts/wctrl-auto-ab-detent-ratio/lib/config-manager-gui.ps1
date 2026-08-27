@@ -29,6 +29,7 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $configPath = Join-Path $scriptDir 'config.json'
+$statePath  = Join-Path $scriptDir 'state.json'
 $baseName   = 'wctrl-auto-ab-detent-ratio'
 $repoSlug   = 'cbass2404/wctrl-auto-ab-detent-ratio'
 
@@ -94,6 +95,48 @@ function Write-ConfigRatios {
     $tmp = "$configPath.tmp"
     [IO.File]::WriteAllText($tmp, $updated, (New-Object Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $tmp -Destination $configPath -Force
+}
+
+# ------------------------------------------------------------------- state --
+
+function Read-State {
+    <#
+        What DCS last reported, written by helper.ps1. Absent, unreadable or
+        null all mean the same thing - nothing is detected - because the helper
+        may simply not be running, which is the normal case when someone opens
+        this to edit their table.
+
+        Note that 'at' does not come back as the string on disk: ConvertFrom-Json
+        hydrates an ISO-8601 value into a [DateTime], with Kind = Utc because the
+        helper writes a trailing Z. That is the useful form, so a staleness check
+        can subtract it from [DateTime]::UtcNow directly. Nothing reads it today.
+    #>
+    if (-not (Test-Path -LiteralPath $statePath)) { return $null }
+    try {
+        $s = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        $d = $s.lastDetectedAircraft
+        if (-not $d -or [string]::IsNullOrWhiteSpace([string]$d.name)) { return $null }
+        return $d
+    } catch { return $null }
+}
+
+function Clear-DetectedAircraft {
+    <#
+        Activate forces a ratio by hand, so the throttle stops reflecting a
+        detected module and nothing should look live. Same reasoning as
+        helper.ps1 -Apply.
+
+        Written whole rather than spliced: state.json is machine-owned, so there
+        is no formatting to preserve. Silent on failure - the helper rewrites it
+        on the next detection either way.
+    #>
+    try {
+        $tmp = "$statePath.tmp"
+        [IO.File]::WriteAllText($tmp, '{' + [Environment]::NewLine +
+            '    "lastDetectedAircraft": null' + [Environment]::NewLine + '}',
+            (New-Object Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $tmp -Destination $statePath -Force
+    } catch { }
 }
 
 # ------------------------------------------------------------------ device --
@@ -261,7 +304,10 @@ if (Test-Path -LiteralPath $iconPath) {
 }
 $form.Size = New-Object System.Drawing.Size(560, 560)
 $form.StartPosition = 'CenterScreen'
-$form.MinimumSize = New-Object System.Drawing.Size(480, 460)
+# Raised by the same 16px the list and the button column moved down for the
+# "Last detected" label, so shrinking to the minimum leaves exactly the gap
+# between Refresh and Save that it always had.
+$form.MinimumSize = New-Object System.Drawing.Size(480, 476)
 
 $lblDevice = New-Object System.Windows.Forms.Label
 $lblDevice.Location = New-Object System.Drawing.Point(12, 12)
@@ -270,9 +316,16 @@ $lblDevice.Text = 'Looking for your throttle...'
 $lblDevice.Anchor = 'Top,Left,Right'
 $form.Controls.Add($lblDevice)
 
+$lblDetected = New-Object System.Windows.Forms.Label
+$lblDetected.Location = New-Object System.Drawing.Point(12, 48)
+$lblDetected.Size = New-Object System.Drawing.Size(520, 18)
+$lblDetected.Text = 'Last detected: none'
+$lblDetected.Anchor = 'Top,Left,Right'
+$form.Controls.Add($lblDetected)
+
 $list = New-Object System.Windows.Forms.ListView
-$list.Location = New-Object System.Drawing.Point(12, 54)
-$list.Size = New-Object System.Drawing.Size(400, 380)
+$list.Location = New-Object System.Drawing.Point(12, 70)
+$list.Size = New-Object System.Drawing.Size(400, 364)
 $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.MultiSelect = $false
@@ -360,19 +413,75 @@ $list.Add_Resize({ Update-ColumnFit })
 
 $form.Controls.Add($list)
 
-# What the throttle currently reports, so the matching row(s) can be shown as
-# active. More than one entry can share a ratio, and all of them are highlighted
-# - the device stores a percentage, not which aircraft it came from, so claiming
-# a single row is "the" active one would be inventing information.
+# What the throttle currently reports, and what DCS last told the helper it was
+# flying. Both are needed: the device stores a percentage and not which aircraft
+# produced it, so the percentage alone lit up every row sharing that number.
 $script:currentPercent = $null
+$script:detected       = $null
 
 $script:activeBack = [System.Drawing.Color]::FromArgb(198, 239, 206)
 $script:activeFore = [System.Drawing.Color]::FromArgb(0, 97, 0)
 
+function Test-NameMatch {
+    <#
+        Case-insensitive containment in EITHER direction.
+
+        Detected names come from DCS and are specific, so a broad "FA-18" entry
+        has to light up for an "FA-18C_hornet" - the detected name contains the
+        entry. The other direction covers a table split into precise variants: a
+        detected "FA-18" should light up both "FA-18C" and "FA-18E", where the
+        entry contains the detected name. "FA-18E" and "FA-18C" never match each
+        other, because neither contains the other.
+    #>
+    param([string]$EntryUpper, [string]$DetectedUpper)
+    if (-not $EntryUpper -or -not $DetectedUpper) { return $false }
+    return $DetectedUpper.Contains($EntryUpper) -or $EntryUpper.Contains($DetectedUpper)
+}
+
 function Update-Highlight {
+    <#
+        Green means "this row is the one DCS is driving right now", and needs
+        both halves to be true.
+
+        The NAME must match what the helper recorded. The RATIO must be what is
+        actually on the throttle. The ratio half is what picks a single row out
+        of several that match the name: with FA-18 at 82 and FA-18C at 79 and an
+        FA-18C_hornet detected, the helper applies 79 on longest-match, so only
+        FA-18C goes green. Two name-matching rows at the SAME ratio both light
+        up, which is honest - they are indistinguishable in outcome.
+
+        With nothing detected, nothing is green. The device line above still
+        reports the raw percentage, so what is physically on the throttle is
+        never hidden.
+    #>
+    $detectedUp = if ($script:detected) { ([string]$script:detected.name).ToUpperInvariant() } else { '' }
+
+    # NONE never matches by name, exactly as in Resolve-Ratio, so whether it is
+    # live depends on nothing else having matched. That has to be known before
+    # any row can be coloured.
+    $anyNamed = $false
     foreach ($item in $list.Items) {
-        $isActive = ($null -ne $script:currentPercent) -and
+        $entryUp = ([string]$item.Text).ToUpperInvariant()
+        if ($entryUp -ne 'NONE' -and (Test-NameMatch -EntryUpper $entryUp -DetectedUpper $detectedUp)) {
+            $anyNamed = $true
+            break
+        }
+    }
+
+    foreach ($item in $list.Items) {
+        $entryUp = ([string]$item.Text).ToUpperInvariant()
+        $nameOk = if ($entryUp -eq 'NONE') {
+            # The fallback is live only when a name was detected and nothing
+            # else matched it, which is precisely when the helper used it.
+            [bool]$detectedUp -and -not $anyNamed
+        } else {
+            Test-NameMatch -EntryUpper $entryUp -DetectedUpper $detectedUp
+        }
+
+        $isActive = $nameOk -and
+                    ($null -ne $script:currentPercent) -and
                     ([string]$item.SubItems[1].Text -eq [string]$script:currentPercent)
+
         if ($isActive) {
             $item.BackColor = $script:activeBack
             $item.ForeColor = $script:activeFore
@@ -381,6 +490,22 @@ function Update-Highlight {
             $item.ForeColor = $list.ForeColor
         }
     }
+}
+
+function Update-DetectedLabel {
+    if (-not $script:detected) {
+        $lblDetected.ForeColor = [System.Drawing.Color]::DimGray
+        $lblDetected.Text = 'Last detected: none (DCS not running)'
+        return
+    }
+    $lblDetected.ForeColor = $script:activeFore
+    $text = "Last detected: $($script:detected.name)"
+    # A plain name hit is already obvious from the green row, so it adds nothing.
+    # Anything else - the NONE fallback, or no NONE entry at all - is worth
+    # spelling out, because then which row is green is not self-explanatory.
+    $via = [string]$script:detected.via
+    if ($via -and $via -notlike 'matched *') { $text += "   ($via)" }
+    $lblDetected.Text = $text
 }
 
 function Update-List {
@@ -525,7 +650,7 @@ function Move-Selected {
     Update-List -SelectIndex $to
 }
 
-[void](New-Button 'Add' 54 {
+[void](New-Button 'Add' 70 {
     $r = Show-EntryDialog
     if (-not $r) { return }
     $clash = $ratios | Where-Object { $_.name -ieq $r.name } | Select-Object -First 1
@@ -556,9 +681,9 @@ $editAction = {
     $sel.name = $r.name; $sel.ratio = $r.ratio
     Update-List -SelectName $r.name
 }
-$btnEdit = New-Button 'Edit' 92 $editAction 'Change the selected entry'
+$btnEdit = New-Button 'Edit' 108 $editAction 'Change the selected entry'
 
-$btnDelete = New-Button 'Delete' 130 {
+$btnDelete = New-Button 'Delete' 146 {
     $sel = Get-Selected
     if (-not $sel) { return }
     if ($sel.name -ieq 'NONE') { return }
@@ -568,11 +693,11 @@ $btnDelete = New-Button 'Delete' 130 {
     Update-List
 } 'Remove the selected entry'
 
-$btnUp = New-Button 'Move Up' 168 { Move-Selected -Delta -1 } 'Move the selected entry one row up'
+$btnUp = New-Button 'Move Up' 184 { Move-Selected -Delta -1 } 'Move the selected entry one row up'
 
-$btnDown = New-Button 'Move Down' 206 { Move-Selected -Delta 1 } 'Move the selected entry one row down'
+$btnDown = New-Button 'Move Down' 222 { Move-Selected -Delta 1 } 'Move the selected entry one row down'
 
-[void](New-Button 'A-Z' 244 {
+[void](New-Button 'A-Z' 260 {
     if ($ratios.Count -lt 2) { return }
     # NONE sorts to the top rather than under N, and this is also the only way
     # to get it back there if an older config has it somewhere in the middle.
@@ -585,7 +710,7 @@ $btnDown = New-Button 'Move Down' 206 { Move-Selected -Delta 1 } 'Move the selec
     if ($keep) { Update-List -SelectIndex $ratios.IndexOf($keep) } else { Update-List }
 } 'Sort the table A-Z, keeping NONE at the top')
 
-$btnActivate = New-Button 'Activate' 294 {
+$btnActivate = New-Button 'Activate' 310 {
     $sel = Get-Selected
     if (-not $sel) { return }
     $form.Cursor = 'WaitCursor'
@@ -596,6 +721,9 @@ $btnActivate = New-Button 'Activate' 294 {
                 "Could not reach the throttle.`n`nIf this is the first time, calibrate the afterburner detent in SimAppPro - until then there is no ratio to set.",
                 'Throttle not found', 'OK', 'Warning')
         } else {
+            # The throttle no longer reflects a detected module, so nothing
+            # should look live until DCS says otherwise.
+            Clear-DetectedAircraft
             Refresh-Device
         }
     } catch {
@@ -603,7 +731,7 @@ $btnActivate = New-Button 'Activate' 294 {
     } finally { $form.Cursor = 'Default' }
 } 'Apply this ratio to the throttle now'
 
-[void](New-Button 'Restore Default' 332 {
+[void](New-Button 'Restore Default' 348 {
     $answer = [System.Windows.Forms.MessageBox]::Show($form,
         "Restore the throttle to how it ships?`r`n`r`nThe detent goes back to having no afterburner mapping. Your table is not touched, and the detent calibration is left alone.",
         'Restore default', 'YesNo', 'Question')
@@ -619,7 +747,7 @@ $btnActivate = New-Button 'Activate' 294 {
     } finally { $form.Cursor = 'Default' }
 } 'Put the throttle back to how it ships, with no ratio applied')
 
-[void](New-Button 'Refresh' 370 { Refresh-Device } 'Re-read the value currently on the throttle')
+[void](New-Button 'Refresh' 386 { Refresh-Device } 'Re-read the value currently on the throttle')
 
 function Update-ButtonState {
     <# Every row-scoped button is dead without a selection, so none stay lit. #>
@@ -641,6 +769,10 @@ $list.Add_SelectedIndexChanged({ Update-ButtonState })
 function Refresh-Device {
     $lblDevice.Text = 'Reading the throttle...'
     $form.Refresh()
+    # Cheap file read, and independent of whether the throttle answers: a device
+    # error should not also blank out what DCS last reported.
+    $script:detected = Read-State
+    Update-DetectedLabel
     try {
         $cur = Get-CurrentRatio -Config $cfg
         if ($null -eq $cur) {
@@ -699,7 +831,7 @@ $lblHint.Location = New-Object System.Drawing.Point(12, 470)
 $lblHint.Size = New-Object System.Drawing.Size(300, 44)
 $lblHint.ForeColor = [System.Drawing.Color]::DimGray
 $lblHint.Anchor = 'Bottom,Left'
-$lblHint.Text = "Green = currently on the throttle.`r`nChanges apply in DCS within ~2 seconds."
+$lblHint.Text = "Green = the module DCS last reported.`r`nChanges apply in DCS within ~2 seconds."
 $form.Controls.Add($lblHint)
 
 # Double-clicking a row is the obvious way to edit it.

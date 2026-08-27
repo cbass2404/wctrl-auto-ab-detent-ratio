@@ -86,7 +86,6 @@ function Get-HelperConfig {
         heartbeatTimeoutMs = 15000
         dcsProcessName     = 'DCS'
         checkForUpdates    = $true
-        overrides          = @{}
     }
     if (Test-Path $path) {
         try {
@@ -98,15 +97,6 @@ function Get-HelperConfig {
             Write-Log "config.json unreadable, using defaults: $($_.Exception.Message)" 'warn'
         }
     }
-    # Normalise overrides to a hashtable: it arrives as a PSCustomObject from
-    # ConvertFrom-Json but is a hashtable when defaulted.
-    $ov = @{}
-    if ($cfg.overrides -is [hashtable]) {
-        foreach ($k in $cfg.overrides.Keys) { $ov[[string]$k] = [int]$cfg.overrides[$k] }
-    } elseif ($cfg.overrides) {
-        foreach ($p in $cfg.overrides.PSObject.Properties) { $ov[[string]$p.Name] = [int]$p.Value }
-    }
-    $cfg.overrides = $ov
     return $cfg
 }
 
@@ -187,6 +177,60 @@ function Get-RestoreTarget {
     return 'clear'
 }
 
+# ------------------------------------------------------------------ state ----
+
+function Get-StatePath { Join-Path $scriptDir 'state.json' }
+
+function Write-DetectedAircraft {
+    <#
+        Record what DCS last reported, so the config manager can show which row
+        is live rather than guessing from the percentage on the throttle.
+
+        Its own file rather than a key in config.json. config.json is hand-edited
+        and rewritten by the GUI's Save, so a second writer there would mean two
+        processes splicing one file, where a Save landing on a stale read
+        silently drops a name. state.json is machine-owned, which also means it
+        can simply be serialised whole: there are no comments, key order or hand
+        alignment to preserve, so none of the splice machinery is needed.
+
+        Written on DETECTION, not on apply, and regardless of whether a HID write
+        actually happened - the label should report what DCS said even when the
+        throttle write failed verification.
+
+        Never throws. A state write is display state and must not be able to fail
+        a detection.
+    #>
+    param([string]$Name, $Ratio, [string]$Via)
+
+    $state = if ([string]::IsNullOrWhiteSpace($Name)) {
+        [ordered]@{ lastDetectedAircraft = $null }
+    } else {
+        [ordered]@{
+            lastDetectedAircraft = [ordered]@{
+                name  = $Name
+                ratio = $Ratio
+                via   = $Via
+                at    = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+            }
+        }
+    }
+
+    $path = Get-StatePath
+    $tmp  = "$path.tmp"
+    try {
+        [IO.File]::WriteAllText($tmp, ($state | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $tmp -Destination $path -Force
+    } catch {
+        Write-Log "could not write state.json: $($_.Exception.Message)" 'warn'
+        try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force } } catch { }
+    }
+}
+
+function Clear-DetectedAircraft {
+    <# No module detected: nothing in the editor should look live. #>
+    Write-DetectedAircraft -Name ''
+}
+
 # --------------------------------------------------------------- matching ----
 
 function Resolve-Ratio {
@@ -194,19 +238,13 @@ function Resolve-Ratio {
         The aircraft name must CONTAIN the table entry's name (case-insensitive).
         Longest match wins so "F-4E" beats "F-4" on an F-4E. NONE never matches
         by name - it is the fallback. With no NONE entry, fall back to the
-        configured restore ratio (the throttle's neutral 75%).
+        configured noMatchRatio.
     #>
     param(
         [Parameter(Mandatory)][string]$Aircraft,
         [Parameter(Mandatory)][array]$Table,
         [Parameter(Mandatory)]$Config
     )
-
-    foreach ($k in $Config.overrides.Keys) {
-        if ($k -ieq $Aircraft) {
-            return @{ ratio = [int]$Config.overrides[$k]; via = "override '$k'" }
-        }
-    }
 
     $up = $Aircraft.ToUpperInvariant()
     $best = $null
@@ -399,8 +437,11 @@ if ($Status) {
     return
 }
 
-if ($Apply -ge 0) { [void](Set-Ratio -Target $Apply -Config $cfg -Reason '(manual)'); return }
-if ($Restore)     { [void](Set-Ratio -Target (Get-RestoreTarget $cfg) -Config $cfg -Reason '(manual restore)'); return }
+# Both set a ratio with no aircraft behind it, so a name left in state.json
+# would point the editor at a row that is not why the throttle reads what it
+# reads.
+if ($Apply -ge 0) { Clear-DetectedAircraft; [void](Set-Ratio -Target $Apply -Config $cfg -Reason '(manual)'); return }
+if ($Restore)     { Clear-DetectedAircraft; [void](Set-Ratio -Target (Get-RestoreTarget $cfg) -Config $cfg -Reason '(manual restore)'); return }
 
 # ---- listener ----
 
@@ -419,6 +460,10 @@ $udp.Client.ReceiveTimeout = 1000
 
 $restoreTarget = Get-RestoreTarget $cfg
 Write-Log "v$script:Version listening on 127.0.0.1:$($cfg.port); restore target $(if ($restoreTarget -eq 'clear') { 'Inactivated' } else { "$restoreTarget%" })"
+
+# A helper killed from Task Manager or lost to a power cut leaves its last
+# detection behind, and the next session must not inherit it.
+Clear-DetectedAircraft
 
 $script:currentAircraft = $null
 $script:missionLive     = $false
@@ -448,6 +493,9 @@ function Sync-RatioTableIfChanged {
     if ($script:currentAircraft) {
         $r = Resolve-Ratio -Aircraft $script:currentAircraft -Table $script:table -Config $cfg
         Write-Log "config changed; re-resolving '$($script:currentAircraft)' -> $($r.ratio)% ($($r.via))"
+        # Re-resolving can move the answer to a different row, so the recorded
+        # ratio has to follow or the editor would highlight nothing.
+        Write-DetectedAircraft -Name $script:currentAircraft -Ratio $r.ratio -Via $r.via
         [void](Set-Ratio -Target $r.ratio -Config $cfg -Reason "for $($script:currentAircraft) (config updated)")
     }
 }
@@ -457,6 +505,7 @@ function Restore-Neutral {
     if ($null -eq $script:currentAircraft) { return }
     $script:currentAircraft = $null
     $script:missionLive = $false
+    Clear-DetectedAircraft
     [void](Set-Ratio -Target $restoreTarget -Config $cfg -Reason "($Reason)")
 }
 
@@ -483,6 +532,7 @@ try {
                                 $script:currentAircraft = $name
                                 $r = Resolve-Ratio -Aircraft $name -Table $script:table -Config $cfg
                                 Write-Log "aircraft '$name' -> $($r.ratio)% ($($r.via))"
+                                Write-DetectedAircraft -Name $name -Ratio $r.ratio -Via $r.via
                                 [void](Set-Ratio -Target $r.ratio -Config $cfg -Reason "for $name")
                             }
                         }
