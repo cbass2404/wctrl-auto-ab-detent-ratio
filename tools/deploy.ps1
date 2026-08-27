@@ -744,7 +744,15 @@ function Write-MergedConfig {
     # differently afterwards.
     if ($merged.Migrated)            { $what += 'moved your ratio table and device filter into a throttle group (config format 1 -> 2)' }
     if ($merged.AddedGroups.Count)   { $what += "added $($merged.AddedGroups.Count) new throttle(s): $($merged.AddedGroups -join ', ')" }
-    if ($merged.AddedRatios.Count)   { $what += "added $($merged.AddedRatios.Count) new aircraft: $($merged.AddedRatios -join ', ')" }
+    # Names only while the list is short enough to read. A release that widens
+    # the default table adds dozens at once, and naming all of them buries
+    # everything else this summary says - the count is the useful part, and the
+    # config manager shows the names.
+    if ($merged.AddedRatios.Count -gt 6) {
+        $what += "added $($merged.AddedRatios.Count) new aircraft to your ratio table"
+    } elseif ($merged.AddedRatios.Count) {
+        $what += "added $($merged.AddedRatios.Count) new aircraft: $($merged.AddedRatios -join ', ')"
+    }
     if ($merged.AddedKeys.Count)     { $what += "added $($merged.AddedKeys.Count) new setting(s): $($merged.AddedKeys -join ', ')" }
     if ($what.Count -eq 0)           { $what += 'kept every setting you had' }
 

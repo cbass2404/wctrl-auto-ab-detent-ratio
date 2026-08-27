@@ -8,11 +8,17 @@ If you are searching for answers to the following WinWing Orion 2 problems, this
 - **WinWing SimAppPro profiles not shifting or switching automatically.** (Solved: This tool completely replaces SimAppPro background tasks using a lightweight PowerShell hook).
 - **How to fix individual aircraft afterburner curves for Orion Throttle Base II.** (Solved: Eliminates the need to configure manual axis curves, deadzones, or sliders inside the DCS Options menu).
 
-**Your WinWing throttle's afterburner detent, set automatically for whatever aircraft you
+**Your WinWing throttle's detent, set automatically for whatever aircraft you
 just jumped into.**
 
+The notch marks **the last power you can hold all day**. Below it you can sit forever.
+Past it you are spending a budget. On a fast jet that line is the afterburner gate; on a
+warbird it is the gate before WEP or water injection. Same idea, same hardware feature,
+and on several of these aircraft it is a gate the real pilot could feel.
+
 Enter an F/A-18 and the detent moves to your Hornet ratio. Switch to an F-14 and it
-follows. Quit DCS and the throttle goes back to neutral so other sims are unaffected.
+follows. Jump in a P-51 and it sits just below WEP. Quit DCS and the throttle goes back
+to neutral so other sims are unaffected.
 
 No more alt-tabbing to SimAppPro every time you change module.
 
@@ -114,17 +120,47 @@ with `-ExecutionPolicy Bypass` for that one process only — nothing machine-wid
 
 ### 3. Check your ratios
 
-It ships with a table that works well with the detent at the end of its track, so you may
-not need to change anything:
+It ships with **55 aircraft** already set up, so you may not need to change anything. The
+ratio is where the notch sits as a percentage of throttle travel, and it always means the
+same thing: the last power you can hold indefinitely.
 
-| Aircraft | Ratio |     | Aircraft | Ratio |
-| -------- | ----- | --- | -------- | ----- |
-| `NONE`   | 100   |     | `MiG-21` | 91    |
-| `F-4`    | 70    |     | `MiG-29` | 60    |
-| `FA-18`  | 82    |     | `AJS37`  | 81    |
-| `F-14`   | 54    |     | `F-5`    | 82    |
-| `F-15`   | 80    |     | `F4U`    | 75    |
-| `F-16`   | 75    |     | `C-130`  | 75    |
+**Afterburner gate** — past the notch is burner.
+
+| Aircraft | Ratio |     | Aircraft | Ratio |     | Aircraft    | Ratio |
+| -------- | ----- | --- | -------- | ----- | --- | ----------- | ----- |
+| `F-14`   | 54    |     | `JF-17`  | 75    |     | `EA-18`     | 82    |
+| `MiG-29` | 60    |     | `Su-27`  | 75    |     | `F-5`       | 82    |
+| `F-4`    | 70    |     | `Su-33`  | 75    |     | `FA-18`     | 82    |
+| `F-15E`  | 75    |     | `Su-34`  | 75    |     | `Mirage-F1` | 87    |
+| `F-16`   | 75    |     | `F-15C`  | 80    |     | `M-2000`    | 89    |
+| `J-11`   | 75    |     | `AJS37`  | 81    |     | `MiG-21`    | 91    |
+
+**Emergency power gate** — past the notch is on the clock: WEP, water injection, MW-50,
+boost cut-out.
+
+| Aircraft | Ratio |     | Aircraft   | Ratio |     | Aircraft  | Ratio |
+| -------- | ----- | --- | ---------- | ----- | --- | --------- | ----- |
+| `A-6`    | 75    |     | `C-130`    | 85    |     | `TF-51`   | 90    |
+| `I-16`   | 80    |     | `Mosquito` | 85    |     | `AV8B`    | 91    |
+| `P-47`   | 80    |     | `Spitfire` | 85    |     | `FW-190A` | 92    |
+| `Bf-109` | 81    |     | `La-7`     | 90    |     | `F4U`     | 95    |
+| `C-101`  | 85    |     | `P-51`     | 90    |     | `F-86`    | 97    |
+
+**No notch** — nothing above max continuous worth gating, so the detent sits at the top of
+the track and stays out of the way. All at **100**:
+
+`A-4` · `A-10` · `AH-64` · `CH-47` · `Christen Eagle` · `F-100` · `FW-190D` · `Hawk` ·
+`Ka-50` · `L-39` · `MB-339` · `Mi-8` · `Mi-24` · `MiG-15` · `MiG-19` · `OH58` · `SA342` ·
+`Su-25` · `UH-1` · `UH-60` · `Yak-52`
+
+Anything not listed falls to **`NONE`**, which ships at **75** — a usable middle setting
+rather than no gate at all.
+
+> **These values assume default DCS axis tuning.** Any curve, saturation or deadzone you
+> set on the throttle axis for an aircraft moves the relationship between lever position
+> and engine output, which shifts where the notch should be. They also assume the physical
+> detent is calibrated at the very end of its track. Treat every number as a starting
+> point and expect to nudge a few percent to taste.
 
 To change them, open **WinWing Afterburner Ratios** from the Start Menu — the installer
 offers to add it, so you never need to go near the DCS folders. If you turned the shortcut
@@ -348,7 +384,7 @@ Nothing is hardcoded. The ratio table lives inside a **throttle entry** in
         "match":       [ "Orion Throttle Base II" ],
         "label":       "WinWing Orion Throttle Base II",
         "throttlePid": 0,
-        "ratios":      [ { "name": "NONE", "ratio": 100 } ]
+        "ratios":      [ { "name": "NONE", "ratio": 75 } ]
     }
 ]
 ```
@@ -414,8 +450,11 @@ logs what it _did_ find and touches no device.
    `FA-18C` and `hornet`, whichever you put higher is the one that decides an
    `FA-18C_hornet`. Use **Move Up** in the ratio editor to settle it. Bear in mind that
    **A-Z** re-sorts the table and can therefore flip a tie you had arranged by hand.
-3. `NONE` never matches by name — it is the fallback when nothing else hits.
-4. If there is no `NONE` entry, fall back to `noMatchRatio` (**`75`**).
+3. `NONE` never matches by name — it is the fallback when nothing else hits. It ships at
+   **`75`**, a usable middle setting, rather than at 100 where there would be no gate at
+   all.
+4. If there is no `NONE` entry, fall back to `noMatchRatio` (**`75`**) — deliberately the
+   same number, so both answers to "I do not know what this aircraft is" agree.
 
 Verified against real DCS module names:
 
@@ -425,7 +464,8 @@ Verified against real DCS module names:
 | `F-16C_50`                                | 75 % (matched `F-16`)             |
 | `F-14B`                                   | 54 % (matched `F-14`)             |
 | `AJS37`                                   | 81 % (matched `AJS37`)            |
-| `AH-64D_BLK_II`                           | 100 % (no match → `NONE`)         |
+| `AH-64D_BLK_II`                           | 100 % (matched `AH-64`)           |
+| `Su-57`                                   | 75 % (no match → `NONE`)          |
 | `f-4e-45mc` vs entry `f-4e`               | 70 % (case-insensitive both ways) |
 | `F-4E-45MC` with entries `f-4` and `F-4E` | 70 % (longest match wins)         |
 
