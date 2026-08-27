@@ -127,7 +127,8 @@ not need to change anything:
 | `F-16`   | 75    |     | `C-130`  | 75    |
 
 To change them, open **WinWing Afterburner Ratios** from the Start Menu — the installer
-adds it, so you never need to go near the DCS folders.
+offers to add it, so you never need to go near the DCS folders. If you turned the shortcut
+down, run `launch-config-manager.cmd` from the installed folder instead.
 
 Add, edit and delete aircraft, and hit **Activate** to push a ratio straight to the
 throttle so you can feel it without launching DCS. Edits apply to a running DCS within a
@@ -229,16 +230,28 @@ The tool features a fully automated installer and update manager designed to req
 
 ## Updating and uninstalling
 
+**Close DCS first.** Installing, updating and uninstalling are all blocked while DCS is
+running, with no override. The installer needs the folder to itself: an update replaces
+files the running mission has open and removes the version it is still using. Waiting
+costs you nothing, since hooks are read once when DCS starts and nothing installed now
+takes effect before a restart. If you start the installer with DCS open it waits for you.
+Close DCS and press Enter.
+
 Download the new release and double-click `install.cmd` again. Your ratios and settings
 carry over, the old version is removed, and the Start Menu shortcut is repointed at the
 new one.
 
 ```powershell
-install.cmd -Uninstall     # remove it entirely, shortcut included
-install.cmd -WhatIf        # show what would change, without doing it
-install.cmd -All           # install to every DCS folder found
-install.cmd -NoShortcut    # skip the Start Menu shortcut
+install.cmd -Uninstall         # remove it entirely, shortcut included
+install.cmd -WhatIf            # show what would change, without doing it
+install.cmd -All               # install to every DCS folder found
+install.cmd -NoShortcut        # skip the Start Menu shortcut, leaving any existing one
+install.cmd -Shortcut          # create the shortcut without asking
 ```
+
+The installer asks before adding the Start Menu shortcut. Answering no removes the entry
+if you already have one, so earlier versions putting it there without asking can be undone
+by running the installer again and saying no.
 
 ---
 
