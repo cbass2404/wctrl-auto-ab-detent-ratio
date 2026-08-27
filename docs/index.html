@@ -452,6 +452,109 @@
         height: 14px;
         background: var(--ink);
       }
+      .hero-row {
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1fr) 46px;
+        gap: 8px 14px;
+        align-items: center;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--rule);
+      }
+      .hero-row:last-child {
+        border-bottom: 0;
+      }
+      .hero-label {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .hero-label .nick {
+        font-size: 0.78rem;
+        white-space: normal;
+      }
+      .hero-bar {
+        min-width: 0;
+      }
+      @media (max-width: 560px) {
+        .hero-row {
+          grid-template-columns: minmax(0, 1fr) 46px;
+        }
+        .hero-bar {
+          grid-column: 1 / -1;
+        }
+      }
+      .groups {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 18px;
+        margin-top: 22px;
+      }
+      .group {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        box-shadow: var(--shadow);
+        padding: 16px;
+        min-width: 0;
+      }
+      .group-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid var(--rule);
+        padding-bottom: 8px;
+      }
+      .group-title {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 500;
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+      .group-count {
+        font-family: "IBM Plex Mono", monospace;
+        font-variant-numeric: tabular-nums;
+        font-size: 0.8rem;
+        color: var(--accent);
+        flex: none;
+      }
+      .group-why {
+        font-size: 0.85rem;
+        color: var(--ink-2);
+        margin: 10px 0 12px;
+      }
+      .group-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .group-list li {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 4px 0;
+        border-bottom: 1px solid var(--rule);
+      }
+      .group-list li:last-child {
+        border-bottom: 0;
+      }
+      .gi-name {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 600;
+        font-size: 0.88rem;
+        overflow-wrap: anywhere;
+      }
+      .gi-pct {
+        font-family: "IBM Plex Mono", monospace;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        font-size: 0.88rem;
+        color: var(--accent);
+        flex: none;
+      }
       .foot-note {
         font-size: 0.9rem;
         color: var(--ink-3);
@@ -743,41 +846,73 @@
       <div class="wrap">
         <div class="section-head">
           <span class="eyebrow">Ships ready to fly</span>
-          <h2>Twelve aircraft already set up</h2>
+          <h2>Fifty-five aircraft already set up</h2>
           <p class="prose" style="color: var(--ink-2); margin-top: 6px">
-            Each bar is your throttle's full travel. The mark is where the
-            detent bites &mdash; everything past it is burner. The Tomcat gives
-            you nearly half the throttle in afterburner; the MiG-21 barely a
-            sliver.
+            The notch marks the last power you can hold all day. Below it you
+            can sit forever; past it you are spending a budget. On a fast jet
+            that line is the afterburner gate. On a warbird it is the gate
+            before WEP or water injection &mdash; the same idea, and on several
+            of them a real gate the pilot could feel.
           </p>
         </div>
 
         <div class="scale">
-          <div class="scale-inner">
-            <table>
-              <thead>
-                <tr>
-                  <th style="width: 1%">Aircraft</th>
-                  <th style="width: 1%">&nbsp;</th>
-                  <th>Throttle travel &nbsp;0 &mdash; 100</th>
-                  <th style="text-align: right">Detent</th>
-                </tr>
-              </thead>
-              <tbody id="rows"></tbody>
-            </table>
+          <div class="hero">
+            <div class="hero-row">
+              <div class="hero-label">
+                <span class="ac">F-14</span>
+                <span class="nick">afterburner gate</span>
+              </div>
+              <div class="hero-bar">
+                <div class="bar">
+                  <div class="burn" style="width: 46%"></div>
+                  <div class="notch" style="left: calc(54% - 1px)"></div>
+                </div>
+              </div>
+              <div class="pct">54</div>
+            </div>
+            <div class="hero-row">
+              <div class="hero-label">
+                <span class="ac">P-51</span>
+                <span class="nick">WEP gate</span>
+              </div>
+              <div class="hero-bar">
+                <div class="bar">
+                  <div class="burn" style="width: 10%"></div>
+                  <div class="notch" style="left: calc(90% - 1px)"></div>
+                </div>
+              </div>
+              <div class="pct">90</div>
+            </div>
+            <div class="hero-row">
+              <div class="hero-label">
+                <span class="ac">A-10</span>
+                <span class="nick">no notch</span>
+              </div>
+              <div class="hero-bar">
+                <div class="bar none">
+                  <div class="burn" style="width: 0%"></div>
+                </div>
+              </div>
+              <div class="pct">100</div>
+            </div>
           </div>
           <div class="scale-key">
             <span class="key"><span class="sw tr"></span> throttle range</span>
             <span class="key"><span class="sw notch"></span> detent</span>
-            <span class="key"><span class="sw burn"></span> afterburner</span>
+            <span class="key"><span class="sw burn"></span> on the clock</span>
           </div>
         </div>
+
+        <div class="groups" id="groups"></div>
+
         <p class="foot-note">
-          Every number is yours to change. The Corsair and the Hercules have no
-          afterburner at all &mdash; they simply park the throttle at its
-          neutral 75 and stay out of the way.
-          <strong>NONE</strong> is the catch-all for any aircraft you have not
-          set up.
+          Anything not in the table falls to <strong>NONE</strong> at 75, a
+          usable middle setting rather than no gate at all. Every number is a
+          starting point and yours to change &mdash; they assume the detent is
+          calibrated at the end of its track and default DCS axis tuning, so a
+          curve or a deadzone on your throttle axis will move them a few
+          percent.
         </p>
       </div>
     </section>
@@ -1005,47 +1140,70 @@
     </footer>
 
     <script>
-      var AC = [
-        ["F-14", "Tomcat", 54],
-        ["MiG-29", "Fulcrum", 60],
-        ["F-4", "Phantom II", 70],
-        ["F-16", "Viper", 75],
-        ["F4U", "Corsair", 75],
-        ["C-130", "Hercules", 75],
-        ["F-15", "Eagle", 80],
-        ["AJS37", "Viggen", 81],
-        ["FA-18", "Hornet", 82],
-        ["F-5", "Tiger II", 82],
-        ["MiG-21", "Fishbed", 91],
-        ["NONE", "No Afterburner", 100],
+      var GROUPS = [
+        {
+          title: "Afterburner gate",
+          why: "Past the notch is burner.",
+          list: [
+            ["F-14", 54], ["MiG-29", 60], ["F-4", 70], ["F-15E", 75],
+            ["F-16", 75], ["J-11", 75], ["JF-17", 75], ["Su-27", 75],
+            ["Su-33", 75], ["Su-34", 75], ["F-15C", 80], ["AJS37", 81],
+            ["EA-18", 82], ["F-5", 82], ["FA-18", 82], ["Mirage-F1", 87],
+            ["M-2000", 89], ["MiG-21", 91]
+          ]
+        },
+        {
+          title: "Emergency power gate",
+          why: "Past the notch is time-limited: WEP, water injection, MW-50, boost.",
+          list: [
+            ["A-6", 75], ["I-16", 80], ["P-47", 80], ["Bf-109", 81],
+            ["C-101", 85], ["C-130", 85], ["Mosquito", 85], ["Spitfire", 85],
+            ["La-7", 90], ["P-51", 90], ["TF-51", 90], ["AV8B", 91],
+            ["FW-190A", 92], ["F4U", 95], ["F-86", 97]
+          ]
+        },
+        {
+          title: "No notch",
+          why: "Nothing above max continuous worth gating. The detent sits at the top of the track.",
+          list: [
+            ["A-4", 100], ["A-10", 100], ["AH-64", 100], ["CH-47", 100],
+            ["Christen Eagle", 100], ["F-100", 100], ["FW-190D", 100],
+            ["Hawk", 100], ["Ka-50", 100], ["L-39", 100], ["MB-339", 100],
+            ["Mi-8", 100], ["Mi-24", 100], ["MiG-15", 100], ["MiG-19", 100],
+            ["OH58", 100], ["SA342", 100], ["Su-25", 100], ["UH-1", 100],
+            ["UH-60", 100], ["Yak-52", 100]
+          ]
+        }
       ];
-      document.getElementById("rows").innerHTML = AC.map(function (row) {
-        var n = row[0],
-          nick = row[1],
-          r = row[2];
-        var none = r === 100;
+      document.getElementById("groups").innerHTML = GROUPS.map(function (g) {
+        var items = g.list
+          .map(function (row) {
+            return (
+              '<li><span class="gi-name">' +
+              row[0] +
+              '</span><span class="gi-pct">' +
+              row[1] +
+              "</span></li>"
+            );
+          })
+          .join("");
         return (
-          "<tr>" +
-          '<td class="ac">' +
-          n +
-          "</td>" +
-          '<td class="nick">' +
-          nick +
-          "</td>" +
-          '<td class="bar-cell"><div class="bar' +
-          (none ? " none" : "") +
-          '">' +
-          '<div class="burn" style="width:' +
-          (100 - r) +
-          '%"></div>' +
-          (none
-            ? ""
-            : '<div class="notch" style="left:calc(' + r + '% - 1px)"></div>') +
-          "</div></td>" +
-          '<td class="pct">' +
-          r +
-          "</td>" +
-          "</tr>"
+          '<div class="group">' +
+          '<div class="group-head">' +
+          '<span class="group-title">' +
+          g.title +
+          "</span>" +
+          '<span class="group-count">' +
+          g.list.length +
+          "</span>" +
+          "</div>" +
+          '<p class="group-why">' +
+          g.why +
+          "</p>" +
+          '<ul class="group-list">' +
+          items +
+          "</ul>" +
+          "</div>"
         );
       }).join("");
     </script>
