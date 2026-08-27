@@ -541,6 +541,7 @@ function New-Shortcut {
     $libDir = Join-Path (Join-Path (Join-Path $Dcs 'Scripts') $projectName) 'lib'
     $shim   = Join-Path $libDir 'run-hidden.vbs'
     if (-not (Test-Path -LiteralPath $shim)) { return }
+    $icon   = Join-Path $libDir 'app.ico'
 
     $dir = Get-StartMenuDir
     if (-not (Test-Path -LiteralPath $dir)) {
@@ -556,6 +557,10 @@ function New-Shortcut {
         $sc.Arguments        = '"' + $shim + '" config-manager-gui.ps1'
         $sc.WorkingDirectory = $libDir
         $sc.Description      = "Edit afterburner detent ratios (v$version)"
+        # Without this the entry wears wscript.exe's generic script icon, which
+        # says nothing about what it opens. Missing icon is not worth failing
+        # the shortcut over, so it is only set when the file is actually there.
+        if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
         $sc.Save()
         Write-Host "  Start Menu shortcut: $shortcutName"
     } catch {

@@ -253,6 +253,12 @@ foreach ($r in @($cfg.ratios)) {
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Afterburner detent ratios  -  v$version"
+# Same file the Start Menu shortcut points at, so the window and the entry that
+# opened it match in the taskbar. A missing icon is not worth failing over.
+$iconPath = Join-Path $scriptDir 'app.ico'
+if (Test-Path -LiteralPath $iconPath) {
+    try { $form.Icon = New-Object System.Drawing.Icon $iconPath } catch { }
+}
 $form.Size = New-Object System.Drawing.Size(560, 560)
 $form.StartPosition = 'CenterScreen'
 $form.MinimumSize = New-Object System.Drawing.Size(480, 460)

@@ -107,7 +107,8 @@ jobs:
                             "$proj\lib\helper.ps1",
                             "$proj\lib\WinctrlHid.ps1",
                             "$proj\lib\config.json",
-                            "$proj\lib\run-hidden.vbs") {
+                            "$proj\lib\run-hidden.vbs",
+                            "$proj\lib\app.ico") {
             if (-not (Test-Path -LiteralPath (Join-Path $stage $need))) {
               Write-Host "::error::package is missing $need"; exit 1
             }
