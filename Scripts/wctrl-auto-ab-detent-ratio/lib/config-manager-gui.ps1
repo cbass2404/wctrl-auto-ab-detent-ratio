@@ -43,6 +43,107 @@ $version = $(
     if ($leaf -like "$baseName-*") { $leaf.Substring($baseName.Length + 1) } else { 'dev' }
 )
 
+# ------------------------------------------------------------ one instance --
+
+<#
+    One editor per config.json.
+
+    Every launch is its own powershell.exe, so nothing stopped a second window
+    opening over the first. Two windows both hold the throttle open, and both
+    rewrite the file on save from the table they read at startup, so whichever
+    is saved last silently discards the other's edits.
+
+    Two named kernel objects, both scoped to the config path so that two
+    installs pointing at different DCS folders stay independent while two
+    shortcuts to the same one do not:
+
+      -gui        held open for the life of the window. Its existence is the
+                  whole guard, so there is nothing to wait on and nothing to
+                  release by hand.
+      -gui-hwnd   eight bytes carrying the running window's handle, published
+                  by the window itself once it exists.
+
+    Both die with the process that owns them, killed or not, so a crashed
+    window neither locks the next one out nor leaves a handle behind to chase.
+    That is the point of doing it this way rather than with a pid file: there
+    is no state that can outlive its owner and go stale, and the second
+    instance raises the exact window that is open rather than matching on a
+    window title that a second install would answer to just as well.
+
+    helper.ps1 guards itself the same way at its UDP bind.
+#>
+$sha = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $instanceKey = [BitConverter]::ToString(
+        $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($configPath.ToLowerInvariant()))
+    ).Replace('-', '').Substring(0, 16)
+} finally { $sha.Dispose() }
+
+# Local\ is per logon session, so another user's window is theirs alone.
+$mutexName = "Local\$baseName-gui-$instanceKey"
+$mapName   = "$mutexName-hwnd"
+
+$createdNew = $false
+$script:instanceMutex = New-Object System.Threading.Mutex($false, $mutexName, [ref]$createdNew)
+
+if (-not $createdNew) {
+    # Raise the window that is already open rather than exiting to nothing: a
+    # shortcut that looks like it did nothing reads as a bug, and the window is
+    # often minimised or behind DCS.
+    $hwnd = [IntPtr]::Zero
+    try {
+        $map = [System.IO.MemoryMappedFiles.MemoryMappedFile]::OpenExisting($mapName)
+        try {
+            $view = $map.CreateViewAccessor(0, 8)
+            try { $hwnd = [IntPtr]$view.ReadInt64(0) } finally { $view.Dispose() }
+        } finally { $map.Dispose() }
+    } catch {
+        # No map yet: the first window is still starting and is about to appear.
+    }
+
+    $raised = $false
+    if ($hwnd -ne [IntPtr]::Zero) {
+        try {
+            Add-Type -Namespace Wctrl -Name Win -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+[DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool altTab);
+'@
+            if ([Wctrl.Win]::IsWindow($hwnd)) {
+                if ([Wctrl.Win]::IsIconic($hwnd)) {
+                    [void][Wctrl.Win]::ShowWindow($hwnd, 9)   # SW_RESTORE
+                }
+                # Windows only lets the foreground process hand focus over. That
+                # right usually reaches us from the shell that ran the shortcut,
+                # but not through every launch path, so fall back to the call
+                # that does not need it.
+                $raised = [Wctrl.Win]::SetForegroundWindow($hwnd)
+                if (-not $raised) {
+                    [Wctrl.Win]::SwitchToThisWindow($hwnd, $true)
+                    $raised = $true
+                }
+            }
+        } catch { }
+
+        # A handle was published but there is no window on it any more. Nothing
+        # is going to appear on its own, so say why the click did nothing.
+        if (-not $raised) {
+            [void][System.Windows.Forms.MessageBox]::Show(
+                'The afterburner ratio editor is already open.',
+                'Already running', 'OK', 'Information')
+        }
+    }
+
+    $script:instanceMutex.Dispose()
+    return
+}
+
+# Created before the form so a launch arriving in between finds it and reads a
+# zero handle, rather than finding nothing and having to guess.
+$script:instanceMap = [System.IO.MemoryMappedFiles.MemoryMappedFile]::CreateNew($mapName, 8)
+
 # ------------------------------------------------------------------ config --
 
 function Read-Config {
@@ -1072,6 +1173,16 @@ Update-GroupLabel -Connected $false
 Update-List
 $form.Add_Shown({
     $form.Activate()
+
+    # Publish this window so a second launch raises it instead of opening
+    # another. Done here because the handle does not exist until the form is
+    # shown; a launch landing before this reads zero and quietly stands down,
+    # which is right, because this window is a moment from appearing anyway.
+    try {
+        $view = $script:instanceMap.CreateViewAccessor(0, 8)
+        try { $view.Write(0, [int64]$form.Handle) } finally { $view.Dispose() }
+    } catch { }
+
     Refresh-Device
 
     # Say so, rather than letting a row the user hand-edited just disappear.
@@ -1096,3 +1207,9 @@ $form.Add_Shown({
 })
 
 [void]$form.ShowDialog()
+
+# Both are held for the life of the window. Releasing them here just hands off
+# to the next launch immediately, instead of waiting on the process to tear
+# down; the kernel would drop them either way.
+$script:instanceMap.Dispose()
+$script:instanceMutex.Dispose()
