@@ -144,6 +144,12 @@ The name is matched as a **case-insensitive substring** of the DCS aircraft name
 `FA-18` covers `FA-18C_hornet`. On several matches the longest name wins. **`NONE` is the
 fallback** for anything unmatched — keep it in the list.
 
+A row turns **green** when it is the one DCS is flying right now: the module DCS last
+reported matches that row's name, and that row's ratio is what is on the throttle. The
+line above the table names the module, or says `none` when DCS is not running. The window
+reads the throttle when it opens, after **Activate**, and when you hit **Refresh**, so if
+you leave it open while switching aircraft, hit **Refresh** to catch up.
+
 > Edit ratios through this window rather than by hand. `config.json` now lives in the
 > `lib` folder with the code that owns it, and hand edits are an easy way to end up with
 > a file the tool cannot read.
@@ -277,9 +283,8 @@ and WinCtrl in about 18 months, and the brand is baked into the product string.
 
 **An aircraft gets the wrong ratio.**
 The longest matching entry wins, and a tie in length goes to whichever row sits higher.
-Add a more specific entry in the ratio editor, move the entry you want above the one it
-ties with, or use `overrides` in `lib\config.json` to pin an exact DCS aircraft name to a
-ratio.
+Add a more specific entry in the ratio editor, or move the entry you want above the one it
+ties with.
 
 **Reporting a bug.** Include the version — it is in the folder name, the hook filename,
 and the first line of the log.
@@ -374,18 +379,17 @@ If the filter matches nothing the helper logs what it _did_ find and touches no 
 
 ### Matching rules
 
-1. An exact-name entry in `overrides` wins outright.
-2. Otherwise the **aircraft name must contain the table entry's name**, case-insensitively
+1. The **aircraft name must contain the table entry's name**, case-insensitively
    (`FA-18C_hornet` contains `FA-18`). Both sides go through `ToUpperInvariant()`, so
    entry names you typed in SimAppPro match regardless of case — `f-4e` matches
    `F-4E-45MC` exactly as `F-4E` does.
-3. On multiple matches the **longest entry name wins**, so `F-4E` beats a hypothetical `F-4`.
+2. On multiple matches the **longest entry name wins**, so `F-4E` beats a hypothetical `F-4`.
    On a **tie in length, the row nearer the top of the table wins** — so if you keep both
    `FA-18C` and `hornet`, whichever you put higher is the one that decides an
    `FA-18C_hornet`. Use **Move Up** in the ratio editor to settle it. Bear in mind that
    **A-Z** re-sorts the table and can therefore flip a tie you had arranged by hand.
-4. `NONE` never matches by name — it is the fallback when nothing else hits.
-5. If there is no `NONE` entry, fall back to `restoreRatio` (75, the throttle's neutral value).
+3. `NONE` never matches by name — it is the fallback when nothing else hits.
+4. If there is no `NONE` entry, fall back to `noMatchRatio` (**`75`**).
 
 Verified against real DCS module names:
 
@@ -553,6 +557,7 @@ Scripts/                                   mirrors DCS Saved Games\Scripts
       WinctrlHid.ps1    Win32 HID layer + the reverse-engineered wire protocol
       config-manager-gui.ps1   the ratio editor window
       config.json       settings + the ratio table (source of truth)
+      state.json        what DCS last reported; written by the helper, read by the editor
       run-hidden.vbs    starts a script with no console window
 install.cmd                                the installer - double-click this
 VERSION                                    single source of truth for the version

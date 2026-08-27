@@ -25,9 +25,6 @@
     "_comment_checkForUpdates": "launch-config-manager.cmd asks GitHub for the newest release on startup and mentions it if you are behind. Never installs anything, and fails silently when offline. Set false to skip the check.",
     "checkForUpdates": true,
 
-    "_comment_overrides": "Exact aircraft name -> ratio, bypassing substring matching. Example: { \"F-16C_50\": 78 }",
-    "overrides": {},
-
     "_comment_ratios": "The ratio table. 'name' is matched as a case-insensitive substring of the DCS aircraft name, so 'FA-18' covers 'FA-18C_hornet'; on several matches the longest name wins. NONE never matches by name - it is the fallback used when nothing else hits. These values assume the physical detent is calibrated at the very end of its track; expect to nudge a few percent to taste.",
     "ratios": [
         { "name": "NONE",   "ratio": 100 },
