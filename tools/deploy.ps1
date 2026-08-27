@@ -339,26 +339,255 @@ function Get-JsonValueSpan {
     return $null
 }
 
+function ConvertTo-JsonToken {
+    <#
+        One JSON scalar, rendered the way it will sit in config.json. Names and
+        labels go through ConvertTo-Json rather than being wrapped in quotes by
+        hand, so a value containing a quote or a backslash cannot produce a file
+        that will not parse.
+    #>
+    param($Value)
+    return ($Value | ConvertTo-Json -Compress)
+}
+
 function Format-RatioRows {
     <#
         Render a ratio table as the aligned rows config.json ships with, so a
         merged file is indistinguishable from a hand-edited one. The column
         width follows the longest name rather than being fixed, so one long
         entry does not knock the rest out of line.
+
+        -Indent is the column the CLOSING bracket sits at; rows go four further
+        in. The table is nested inside a throttle group now, so this is 12
+        rather than the 4 it was when the array was top level.
+
+        A ratio that is not a whole number is written back exactly as the user
+        wrote it, rather than being coerced or dropped. The installer's job is
+        to preserve what is in their file; helper.ps1 and the config manager are
+        what refuse such a row at read time, and they say so when they do.
     #>
-    param([array]$Ratios)
+    param([array]$Ratios, [int]$Indent = 4, [string]$NewLine = "`r`n")
+
+    if ($Ratios.Count -eq 0) { return '[]' }
+
+    $names = @($Ratios | ForEach-Object { (ConvertTo-JsonToken ([string]$_.name)) + ',' })
     $w = 9
-    foreach ($r in $Ratios) {
-        $n = ([string]$r.name).Length + 3
-        if ($n -gt $w) { $w = $n }
-    }
+    foreach ($n in $names) { if ($n.Length -gt $w) { $w = $n.Length } }
+
     # Built up front: -f binds tighter than +, so composing it inline would
     # format the trailing fragment instead of the whole template.
-    $fmt  = '        {{ "name": {0,' + (-$w) + '} "ratio": {1} }}'
-    $rows = $Ratios | ForEach-Object {
-        $fmt -f ('"' + $_.name + '",'), [int]$_.ratio
+    $fmt  = (' ' * ($Indent + 4)) + '{{ "name": {0,' + (-$w) + '} "ratio": {1} }}'
+    $rows = @()
+    for ($i = 0; $i -lt $Ratios.Count; $i++) {
+        $n = 0
+        $value = if ([int]::TryParse([string]$Ratios[$i].ratio, [ref]$n)) {
+            [string]$n
+        } else {
+            ConvertTo-JsonToken $Ratios[$i].ratio
+        }
+        $rows += $fmt -f $names[$i], $value
     }
-    return "[" + [Environment]::NewLine + ($rows -join ("," + [Environment]::NewLine)) + [Environment]::NewLine + "    ]"
+    return '[' + $NewLine + ($rows -join (',' + $NewLine)) + $NewLine + (' ' * $Indent) + ']'
+}
+
+function Format-ThrottleGroups {
+    <#
+        Render the "throttles" array the way the shipped file lays it out: one
+        object per throttle, keys aligned, the ratio table nested inside it.
+    #>
+    param([array]$Groups, [string]$NewLine = "`r`n")
+
+    if ($Groups.Count -eq 0) { return '[]' }
+
+    $blocks = @()
+    foreach ($g in $Groups) {
+        $match = if (@($g.match).Count -eq 0) {
+            '[]'
+        } else {
+            '[ ' + ((@($g.match) | ForEach-Object { ConvertTo-JsonToken ([string]$_) }) -join ', ') + ' ]'
+        }
+        $blocks += (@(
+            '        {'
+            '            "match":       ' + $match + ','
+            '            "label":       ' + (ConvertTo-JsonToken ([string]$g.label)) + ','
+            '            "throttlePid": ' + [int]$g.throttlePid + ','
+            '            "ratios":      ' + (Format-RatioRows -Ratios @($g.ratios) -Indent 12 -NewLine $NewLine)
+            '        }'
+        ) -join $NewLine)
+    }
+    return '[' + $NewLine + ($blocks -join (',' + $NewLine)) + $NewLine + '    ]'
+}
+
+function ConvertTo-ThrottleGroups {
+    <#
+        A parsed config.json as a list of throttle groups, whatever schema it is
+        written in.
+
+        v2 has them already. v1 had one global "ratios" table with the device
+        gates - deviceNameIncludes and throttlePid - alongside it at the top
+        level; that is exactly one group's worth of information, so it is read
+        as one group. Everything downstream then sees a single shape and the
+        migration is not a separate code path that has to be kept in step.
+    #>
+    param($Config)
+
+    $raw = if ($Config.PSObject.Properties['throttles']) {
+        @($Config.throttles)
+    } elseif ($Config.PSObject.Properties['ratios']) {
+        @([pscustomobject]@{
+            match       = @($Config.deviceNameIncludes)
+            label       = $null
+            throttlePid = $Config.throttlePid
+            ratios      = $Config.ratios
+        })
+    } else { @() }
+
+    $out = @()
+    foreach ($g in $raw) {
+        # NOT $pid: that is an automatic variable holding this process's id.
+        $productId = 0
+        [void][int]::TryParse([string]$g.throttlePid, [ref]$productId)
+        $out += [pscustomobject]@{
+            match       = @($g.match |
+                            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                            ForEach-Object { [string]$_ })
+            label       = [string]$g.label
+            throttlePid = $productId
+            ratios      = @($g.ratios | Where-Object { $_.name } | ForEach-Object {
+                                [pscustomobject]@{ name = [string]$_.name; ratio = $_.ratio } })
+        }
+    }
+    return $out
+}
+
+function Test-GroupMatch {
+    <#
+        Do two throttle groups describe the same device?
+
+        Matchers are substrings, so equality is too strict. A user who broadened
+        "Orion Throttle Base II" to "Orion Throttle Base" still means the same
+        throttle, and treating that as a different device would append a
+        duplicate group and split their table in two. Containment in either
+        direction is the same rule the device matcher itself applies.
+
+        An empty matcher means "any device from this vendor", which overlaps
+        everything by definition - so someone who cleared deviceNameIncludes
+        under v1 merges into the shipped group and keeps their empty matcher,
+        rather than gaining a second group that would shadow it.
+    #>
+    param($A, $B)
+
+    $am = @($A.match); $bm = @($B.match)
+    if ($am.Count -eq 0 -or $bm.Count -eq 0) { return $true }
+    foreach ($x in $am) {
+        $xu = ([string]$x).ToUpperInvariant()
+        foreach ($y in $bm) {
+            $yu = ([string]$y).ToUpperInvariant()
+            if ($xu.Contains($yu) -or $yu.Contains($xu)) { return $true }
+        }
+    }
+    return $false
+}
+
+function Merge-RatioRows {
+    <#
+        The user's rows win and keep their order and their values; any name this
+        version ships that they have never seen is appended.
+
+        NONE is the fallback rather than an aircraft, and the editor pins it to
+        the top. Hoist it there on the way through so every config this
+        installer writes has the same known shape, whatever order an older one
+        happened to be in. A table that already has it first comes through
+        unchanged.
+
+        Returns @{ Rows; Added }.
+    #>
+    param([array]$UserRatios, [array]$ShippedRatios)
+
+    $merged = @($UserRatios)
+    $added  = @()
+
+    $have = @{}
+    foreach ($r in $merged) { $have[([string]$r.name).ToLowerInvariant()] = $true }
+
+    foreach ($s in @($ShippedRatios | Where-Object { $_.name })) {
+        if ($have.ContainsKey(([string]$s.name).ToLowerInvariant())) { continue }
+        $merged += [pscustomobject]@{ name = [string]$s.name; ratio = $s.ratio }
+        $added  += [string]$s.name
+    }
+
+    $none = @($merged | Where-Object { $_.name -ieq 'NONE' })
+    if ($none.Count) {
+        $merged = @($none) + @($merged | Where-Object { $_.name -ine 'NONE' })
+    }
+
+    return @{ Rows = @($merged); Added = @($added) }
+}
+
+function Merge-ThrottleGroups {
+    <#
+        Two-level merge: pair the user's groups with the shipped ones, merge
+        each pair's rows, then deal with the groups that had no partner.
+
+        Two cases, both deliberate:
+
+          * A shipped group the user does not have is APPENDED. They may buy
+            that throttle later, and an unmatched group costs nothing until
+            they do - the helper only ever activates a group whose device is
+            actually plugged in.
+          * A user group with a matcher this version does not ship is KEPT.
+            They may have hand-added a throttle that works, and dropping it
+            would be no different from dropping a ratio they tuned.
+
+        The user's own match, label and throttlePid always survive. A label is
+        the one thing that can arrive from the shipped side, and only when the
+        user has none - which is how a migrated v1 group, whose schema had no
+        such key, gets one at all.
+
+        Returns @{ Groups; AddedRatios; AddedGroups }.
+    #>
+    param([array]$UserGroups, [array]$ShippedGroups)
+
+    $groups      = @()
+    $addedRatios = @()
+    $addedGroups = @()
+    $paired      = @{}
+
+    foreach ($u in $UserGroups) {
+        $s = $null
+        for ($i = 0; $i -lt $ShippedGroups.Count; $i++) {
+            if ($paired.ContainsKey($i)) { continue }
+            if (Test-GroupMatch -A $u -B $ShippedGroups[$i]) {
+                $s = $ShippedGroups[$i]
+                $paired[$i] = $true
+                break
+            }
+        }
+
+        $shippedRows = if ($s) { @($s.ratios) } else { @() }
+        $m = Merge-RatioRows -UserRatios @($u.ratios) -ShippedRatios $shippedRows
+        $addedRatios += $m.Added
+
+        $label = if (-not [string]::IsNullOrWhiteSpace($u.label))          { $u.label }
+                 elseif ($s -and -not [string]::IsNullOrWhiteSpace($s.label)) { $s.label }
+                 elseif (@($u.match).Count)                                { @($u.match) -join ', ' }
+                 else                                                      { 'Any WinWing throttle' }
+
+        $groups += [pscustomobject]@{
+            match       = @($u.match)
+            label       = $label
+            throttlePid = $u.throttlePid
+            ratios      = @($m.Rows)
+        }
+    }
+
+    for ($i = 0; $i -lt $ShippedGroups.Count; $i++) {
+        if ($paired.ContainsKey($i)) { continue }
+        $groups      += $ShippedGroups[$i]
+        $addedGroups += [string]$ShippedGroups[$i].label
+    }
+
+    return @{ Groups = @($groups); AddedRatios = @($addedRatios); AddedGroups = @($addedGroups) }
 }
 
 function Merge-UserConfig {
@@ -374,12 +603,21 @@ function Merge-UserConfig {
         byte-identical to what is on disk and the caller writes nothing.
 
         Keys are matched by name. A setting the user's version had that this one
-        no longer ships is dropped, because the code that read it is gone.
-        _comment keys always come from the shipped file: they are documentation
-        rather than user data, and they go stale otherwise.
+        no longer ships is dropped, because the code that read it is gone. That
+        is also what retires v1's top-level "ratios", "deviceNameIncludes" and
+        "throttlePid": this version ships none of them, so they are not copied
+        across - but ConvertTo-ThrottleGroups has already read them into a
+        throttle group by then, so nothing in them is lost.
 
-        Returns @{ Text; AddedRatios; AddedKeys } or $null if either file cannot
-        be read, which leaves the caller with the shipped config untouched.
+        _comment keys always come from the shipped file: they are documentation
+        rather than user data, and they go stale otherwise. configVersion is the
+        same - it is this version's statement about the file it just wrote, and
+        carrying the user's forward would leave a migrated file claiming to be
+        the shape it no longer is.
+
+        Returns @{ Text; AddedRatios; AddedKeys; AddedGroups; Migrated } or
+        $null if either file cannot be read, which leaves the caller with the
+        shipped config untouched.
     #>
     param([string]$ShippedPath, [string]$UserPath)
 
@@ -393,73 +631,87 @@ function Merge-UserConfig {
     }
     if (-not $shipped -or -not $user) { return $null }
 
+    # Follow the shipped file's own line endings rather than the platform's, so
+    # a spliced array does not leave the file half CRLF and half LF - and so a
+    # merge that changes nothing really does come out byte-identical.
+    $nl = if ($shippedRaw.Contains("`r`n")) { "`r`n" } else { "`n" }
+
+    # [pscustomobject], not a hashtable: Windows PowerShell 5.1 does not surface
+    # hashtable keys to Sort-Object's -Property lookup, so sorting a list of
+    # hashtables by .Start returns them in an ARBITRARY order rather than
+    # failing. Applying the splices out of order invalidates every offset after
+    # the first one whose replacement is a different length from what it
+    # replaced, and the parse-back guard below then rejects the whole merge -
+    # which reads to the user as "your settings did not carry forward".
+    # install.cmd uses pwsh when it is present and powershell.exe otherwise, so
+    # this has to be right on 5.1, not just on 7.
     $edits       = @()   # spans of the shipped text to overwrite
     $addedRatios = @()
+    $addedGroups = @()
     $addedKeys   = @()
+    $migrated    = [bool]($null -eq $user.PSObject.Properties['throttles'] -and
+                          $null -ne $user.PSObject.Properties['ratios'])
 
     foreach ($p in $shipped.PSObject.Properties) {
         $key = $p.Name
         if ($key -like '_comment*') { continue }
-
-        $userProp = $user.PSObject.Properties[$key]
-        if ($null -eq $userProp) { $addedKeys += $key; continue }
+        if ($key -eq 'configVersion') { continue }
 
         $span = Get-JsonValueSpan -Raw $shippedRaw -Key $key
         if (-not $span) { continue }
 
-        if ($key -eq 'ratios') {
-            # The one key that merges rather than being taken wholesale: the
-            # user's rows win and keep their order and their values, then any
-            # name this version ships that they have never seen is appended.
-            $userRatios = @($userProp.Value | Where-Object { $_.name } | ForEach-Object {
-                [pscustomobject]@{ name = [string]$_.name; ratio = [int]$_.ratio }
-            })
-            if ($userRatios.Count -eq 0) { continue }
+        if ($key -eq 'throttles') {
+            # The one key that merges rather than being taken wholesale, and the
+            # only one that has to look at the user's file as a whole rather
+            # than at a single value - a v1 config keeps this key's contents
+            # spread across three top-level keys.
+            $userGroups = @(ConvertTo-ThrottleGroups -Config $user)
+            if ($userGroups.Count -eq 0) { continue }
 
-            $have = @{}
-            foreach ($r in $userRatios) { $have[$r.name.ToLowerInvariant()] = $true }
+            $m = Merge-ThrottleGroups -UserGroups $userGroups `
+                                      -ShippedGroups @(ConvertTo-ThrottleGroups -Config $shipped)
+            $addedRatios += $m.AddedRatios
+            $addedGroups += $m.AddedGroups
 
-            $merged = @($userRatios)
-            foreach ($s in @($shipped.ratios | Where-Object { $_.name })) {
-                if ($have.ContainsKey(([string]$s.name).ToLowerInvariant())) { continue }
-                $merged      += [pscustomobject]@{ name = [string]$s.name; ratio = [int]$s.ratio }
-                $addedRatios += [string]$s.name
+            $edits += [pscustomobject]@{
+                Start = $span.Start
+                End   = $span.End
+                Text  = (Format-ThrottleGroups -Groups $m.Groups -NewLine $nl)
             }
-
-            # NONE is the fallback rather than an aircraft, and the editor pins
-            # it to the top. Hoist it there on the way through so every config
-            # this installer writes has the same known shape, whatever order an
-            # older one happened to be in. A table that already has it first
-            # comes through this step unchanged.
-            $none = @($merged | Where-Object { $_.name -ieq 'NONE' })
-            if ($none.Count) {
-                $merged = @($none) + @($merged | Where-Object { $_.name -ine 'NONE' })
-            }
-
-            $edits += @{ Start = $span.Start; End = $span.End; Text = (Format-RatioRows -Ratios $merged) }
             continue
         }
+
+        $userProp = $user.PSObject.Properties[$key]
+        if ($null -eq $userProp) { $addedKeys += $key; continue }
 
         # Everything else is the user's, verbatim. Splicing their raw text
         # rather than a re-serialised value keeps objects, arrays and string
         # quoting exactly as they wrote them.
         $userSpan = Get-JsonValueSpan -Raw $userRaw -Key $key
         if (-not $userSpan) { continue }
-        $edits += @{
+        $edits += [pscustomobject]@{
             Start = $span.Start
             End   = $span.End
             Text  = $userRaw.Substring($userSpan.Start, $userSpan.End - $userSpan.Start)
         }
     }
 
-    # Apply back to front so the earlier offsets stay valid.
+    # Apply back to front so the earlier offsets stay valid. Sorted on an
+    # explicit expression rather than a property name, so the ordering cannot
+    # depend on how the records expose their members.
     $out = $shippedRaw
-    foreach ($e in ($edits | Sort-Object -Property Start -Descending)) {
+    foreach ($e in ($edits | Sort-Object -Property @{ Expression = { [int]$_.Start } } -Descending)) {
         $out = $out.Substring(0, $e.Start) + $e.Text + $out.Substring($e.End)
     }
 
     try { [void]($out | ConvertFrom-Json) } catch { return $null }
-    return @{ Text = $out; AddedRatios = @($addedRatios); AddedKeys = @($addedKeys) }
+    return @{
+        Text        = $out
+        AddedRatios = @($addedRatios)
+        AddedKeys   = @($addedKeys)
+        AddedGroups = @($addedGroups)
+        Migrated    = $migrated
+    }
 }
 
 function Write-MergedConfig {
@@ -487,9 +739,14 @@ function Write-MergedConfig {
     }
 
     $what = @()
-    if ($merged.AddedRatios.Count) { $what += "added $($merged.AddedRatios.Count) new aircraft: $($merged.AddedRatios -join ', ')" }
-    if ($merged.AddedKeys.Count)   { $what += "added $($merged.AddedKeys.Count) new setting(s): $($merged.AddedKeys -join ', ')" }
-    if ($what.Count -eq 0)         { $what += 'kept every setting you had' }
+    # The migration is the headline when it happens: the file's shape changed,
+    # which is worth saying out loud even though nothing about it behaves
+    # differently afterwards.
+    if ($merged.Migrated)            { $what += 'moved your ratio table and device filter into a throttle group (config format 1 -> 2)' }
+    if ($merged.AddedGroups.Count)   { $what += "added $($merged.AddedGroups.Count) new throttle(s): $($merged.AddedGroups -join ', ')" }
+    if ($merged.AddedRatios.Count)   { $what += "added $($merged.AddedRatios.Count) new aircraft: $($merged.AddedRatios -join ', ')" }
+    if ($merged.AddedKeys.Count)     { $what += "added $($merged.AddedKeys.Count) new setting(s): $($merged.AddedKeys -join ', ')" }
+    if ($what.Count -eq 0)           { $what += 'kept every setting you had' }
 
     if (-not $PSCmdlet.ShouldProcess($DestPath, "Merge config.json from $Source - " + ($what -join '; '))) {
         return $true

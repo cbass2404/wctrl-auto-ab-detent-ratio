@@ -75,14 +75,18 @@ $script:DefaultRatios = @(
 # running is picked up without re-parsing the file on every tick.
 $script:TableStamp = $null
 
+# The throttle group in force, and the config stamp it was resolved against.
+# Resolving can mean enumerating HID devices, so it is done once per config
+# load rather than once per operation.
+$script:ActiveGroup      = $null
+$script:ActiveGroupStamp = $null
+
 function Get-HelperConfig {
     $path = Join-Path $scriptDir 'config.json'
     $cfg = [ordered]@{
         port               = 16537
         restoreRatio       = 'clear'
         noMatchRatio       = 75
-        throttlePid        = 0
-        deviceNameIncludes = @('Orion Throttle Base II')
         heartbeatTimeoutMs = 15000
         dcsProcessName     = 'DCS'
         checkForUpdates    = $true
@@ -111,6 +115,169 @@ function Get-ConfigStamp {
     } catch { return $null }
 }
 
+function Get-ThrottleGroups {
+    <#
+        The throttle groups from config.json, normalised.
+
+        A group is @{ match; label; throttlePid; ratios } - which device it
+        applies to, and the ratio table for that device. Grouping exists so a
+        second throttle can carry its own table rather than fighting over a
+        shared one; the shipped file has exactly one group and almost every
+        install will stay that way.
+
+        config v1 had one global "ratios" table plus a top-level
+        deviceNameIncludes / throttlePid. That shape is folded into a single
+        group here so a config the installer has not migrated yet still runs.
+        This is only ever a read-side fallback - deploy.ps1 is what actually
+        rewrites the file.
+
+        A ratio that is not a whole 0..100 is dropped, not clamped or guessed
+        at: it cannot be written to the throttle. Each row is parsed on its own
+        so one hand-edited mistake costs that entry and not the entire table.
+    #>
+    $path = Get-ConfigPath
+    if (-not (Test-Path $path)) { return @() }
+
+    try { $j = Get-Content $path -Raw | ConvertFrom-Json }
+    catch {
+        Write-Log "config.json unreadable: $($_.Exception.Message)" 'warn'
+        return @()
+    }
+
+    $raw = if ($j.throttles) {
+        @($j.throttles)
+    } elseif ($j.ratios) {
+        @([pscustomobject]@{
+            match       = @($j.deviceNameIncludes)
+            label       = $null
+            throttlePid = $j.throttlePid
+            ratios      = $j.ratios
+        })
+    } else { @() }
+
+    $groups = @()
+    foreach ($g in $raw) {
+        $match = @($g.match |
+                   Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                   ForEach-Object { [string]$_ })
+
+        # NOT $pid: that is an automatic variable holding this process's id.
+        $productId = 0
+        [void][int]::TryParse([string]$g.throttlePid, [ref]$productId)
+
+        $label = [string]$g.label
+        if ([string]::IsNullOrWhiteSpace($label)) {
+            $label = if ($match.Count) { $match -join ', ' } else { 'any WinWing throttle' }
+        }
+
+        $ratios = @()
+        $bad    = @()
+        foreach ($e in @($g.ratios | Where-Object { $_.name })) {
+            $n = 0
+            if ([int]::TryParse([string]$e.ratio, [ref]$n) -and $n -ge 0 -and $n -le 100) {
+                $ratios += @{ name = [string]$e.name; ratio = $n }
+            } else {
+                $bad += "$($e.name)=$($e.ratio)"
+            }
+        }
+        if ($bad.Count -gt 0) {
+            Write-Log ("$label - ignoring $($bad.Count) ratio entr" +
+                       $(if ($bad.Count -eq 1) { 'y' } else { 'ies' }) +
+                       " that are not a whole 0-100: $($bad -join ', ')") 'warn'
+        }
+
+        $groups += @{ match = $match; label = $label; throttlePid = $productId; ratios = $ratios }
+    }
+    # No leading comma here, unlike Get-RatioTable: every caller collects this
+    # with @(...), and @() around a comma-wrapped array yields a one-element
+    # array holding the array rather than the array itself.
+    return $groups
+}
+
+function Select-MatchingDevice {
+    <#
+        Filter an already-enumerated device list down to the ones a group is
+        allowed to touch.
+
+        Without a name filter any VID 0x4098 device whose part reports
+        programmed afterburner calibration would be fair game - which could pick
+        up a different throttle (an Orion Base I, or a second stick) and
+        reconfigure it.
+
+        'match' is a list of case-insensitive substrings; a device qualifies if
+        its product string contains ANY of them. Deliberately brand-agnostic:
+        the vendor rebranded twice (WinWing -> WinUSA -> WinCtrl) in ~18 months,
+        so the same model reports as "WINWING ...", "WINUSA ..." or
+        "WINCTRL ..." depending on firmware age. Match the model, never the
+        brand. An empty list accepts any device from this vendor (selection
+        still keys on the VID, which the rebrands did not change).
+    #>
+    param(
+        [Parameter(Mandatory)]$Group,
+        [Parameter(Mandatory)][AllowEmptyCollection()][array]$Devices
+    )
+
+    $filters = @($Group.match)
+    if ($filters.Count -eq 0) { return @($Devices) }
+
+    return @($Devices | Where-Object {
+        $name = [string]$_.Product
+        if ([string]::IsNullOrWhiteSpace($name)) { return $false }
+        $upper = $name.ToUpperInvariant()
+        foreach ($f in $filters) { if ($upper.Contains(([string]$f).ToUpperInvariant())) { return $true } }
+        return $false
+    })
+}
+
+function Get-ActiveThrottleGroup {
+    <#
+        The group whose ratios apply right now: the first one that finds a
+        device actually plugged in.
+
+        Resolving means enumerating HID devices, so the answer is cached against
+        the config stamp and recomputed only when config.json changes. With a
+        single group - what ships, and what almost every install will ever have
+        - there is nothing to resolve and no enumeration happens at all.
+
+        With nothing connected, or nothing matching any group, fall back to the
+        first group, so there is still a table to apply and still a filter to
+        search with. Which group was picked and why is always logged: that line
+        is what makes this diagnosable once a second throttle exists.
+    #>
+    $stamp = Get-ConfigStamp
+    if ($script:ActiveGroup -and $script:ActiveGroupStamp -and $stamp -eq $script:ActiveGroupStamp) {
+        return $script:ActiveGroup
+    }
+
+    $groups = @(Get-ThrottleGroups)
+    if ($groups.Count -eq 0) { return $null }
+
+    $picked = $null
+    $why    = ''
+    if ($groups.Count -eq 1) {
+        $picked = $groups[0]
+        $why    = 'the only one configured'
+    } else {
+        foreach ($g in $groups) {
+            $devs = @(Get-WinctrlDevice -ProductId ([int]$g.throttlePid))
+            if (@(Select-MatchingDevice -Group $g -Devices $devs).Count -gt 0) {
+                $picked = $g
+                $why    = 'its device is connected'
+                break
+            }
+        }
+        if (-not $picked) {
+            $picked = $groups[0]
+            $why    = "none of the $($groups.Count) configured throttles is connected - using the first"
+        }
+    }
+
+    Write-Log "throttle group: $($picked.label) ($why)"
+    $script:ActiveGroup      = $picked
+    $script:ActiveGroupStamp = $stamp
+    return $picked
+}
+
 function Get-RatioTable {
     <#
         Our own config.json is the source of truth. SimAppPro is needed once, to
@@ -118,47 +285,24 @@ function Get-RatioTable {
         Electron app that rewrites its whole config from memory, so treating it
         as a live source made this tool hostage to another program's lifecycle.
         Ratios are edited with launch-config-manager.cmd or by hand.
+
+        The rows are the ACTIVE group's, so a config describing two throttles
+        applies the table written for the one that is plugged in.
     #>
-    $path = Get-ConfigPath
-    if (Test-Path $path) {
-        try {
-            $j = Get-Content $path -Raw | ConvertFrom-Json
-            if ($j.ratios) {
-                # A ratio that is not a whole 0..100 is dropped, not clamped or
-                # guessed at: it cannot be written to the throttle. Each row is
-                # parsed on its own so one hand-edited mistake costs that entry
-                # and not the entire table - [int] on a non-numeric string
-                # throws, and the catch below would fall back to the defaults,
-                # quietly discarding every ratio the user had tuned.
-                $t   = @()
-                $bad = @()
-                foreach ($e in @($j.ratios | Where-Object { $_.name })) {
-                    $n = 0
-                    if ([int]::TryParse([string]$e.ratio, [ref]$n) -and $n -ge 0 -and $n -le 100) {
-                        $t += @{ name = [string]$e.name; ratio = $n }
-                    } else {
-                        $bad += "$($e.name)=$($e.ratio)"
-                    }
-                }
-                if ($bad.Count -gt 0) {
-                    Write-Log ("ignoring $($bad.Count) ratio entr" +
-                               $(if ($bad.Count -eq 1) { 'y' } else { 'ies' }) +
-                               " that are not a whole 0-100: $($bad -join ', ')") 'warn'
-                }
-                if ($t.Count -gt 0) {
-                    $script:TableStamp = Get-ConfigStamp
-                    Write-Log "ratio table: $($t.Count) entries"
-                    return $t
-                }
-            }
-        } catch {
-            Write-Log "config.json unreadable: $($_.Exception.Message)" 'warn'
-        }
-    }
+    $group = Get-ActiveThrottleGroup
     $script:TableStamp = Get-ConfigStamp
+
+    # Leading comma on both returns: a single-row table would otherwise unroll
+    # to the bare hashtable, and Sync-RatioTableIfChanged's .Count check would
+    # then be counting that hashtable's KEYS rather than the table's rows.
+    if ($group -and @($group.ratios).Count -gt 0) {
+        Write-Log "ratio table: $(@($group.ratios).Count) entries for $($group.label)"
+        return ,@($group.ratios)
+    }
+
     Write-Log ('no ratios configured - every aircraft will get NONE. ' +
                'Run launch-config-manager.cmd to add some.') 'warn'
-    return $script:DefaultRatios
+    return ,@($script:DefaultRatios)
 }
 
 function Get-RestoreTarget {
@@ -272,40 +416,27 @@ function Select-ThrottleDevice {
     <#
         Narrow the WinWing devices down to the ones we are allowed to touch.
 
-        Without a name filter any VID 0x4098 device whose part reports programmed
-        afterburner calibration would be fair game - which could pick up a
-        different throttle (an Orion Base I, or a second stick) and reconfigure it.
-
-        deviceNameIncludes is a list of case-insensitive substrings; a device
-        qualifies if its product string contains ANY of them. Deliberately
-        brand-agnostic: the vendor rebranded twice (WinWing -> WinUSA ->
-        WinCtrl) in ~18 months, so the same model reports as "WINWING ...",
-        "WINUSA ..." or "WINCTRL ..." depending on firmware age. Match the
-        model, never the brand. An empty list accepts any device from this
-        vendor (selection still keys on the VID, which the rebrands did not
-        change).
+        Both gates - the name filter and the product id - now come off the
+        ACTIVE throttle group rather than the top level, so a second throttle
+        with a different product id can be described without disturbing the
+        first. The matching itself is unchanged; see Select-MatchingDevice for
+        why it is deliberately brand-agnostic.
     #>
-    param([Parameter(Mandatory)]$Config)
+    $group = Get-ActiveThrottleGroup
+    if (-not $group) {
+        Write-Log 'no throttles configured in config.json' 'warn'
+        return @()
+    }
 
-    $all = @(Get-WinctrlDevice -ProductId ([int]$Config.throttlePid))
+    $all = @(Get-WinctrlDevice -ProductId ([int]$group.throttlePid))
     if ($all.Count -eq 0) {
         Write-Log 'no WinWing HID device found (throttle unplugged?)' 'warn'
         return @()
     }
 
-    $filters = @($Config.deviceNameIncludes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($filters.Count -eq 0) { return $all }
-
-    $matched = @($all | Where-Object {
-        $name = [string]$_.Product
-        if ([string]::IsNullOrWhiteSpace($name)) { return $false }
-        $upper = $name.ToUpperInvariant()
-        foreach ($f in $filters) { if ($upper.Contains(([string]$f).ToUpperInvariant())) { return $true } }
-        return $false
-    })
-
+    $matched = @(Select-MatchingDevice -Group $group -Devices $all)
     if ($matched.Count -eq 0) {
-        Write-Log ("no device matched deviceNameIncludes [" + ($filters -join ', ') + "]; " +
+        Write-Log ("no device matched " + $group.label + " match [" + (@($group.match) -join ', ') + "]; " +
                    "found: " + (($all | ForEach-Object { '"' + $_.Product + '"' }) -join ', ')) 'warn'
     }
     return $matched
@@ -340,7 +471,7 @@ function Use-Throttle {
         $script:CachedPart   = $null
     }
 
-    $devices = @(Select-ThrottleDevice -Config $Config)
+    $devices = @(Select-ThrottleDevice)
     if ($devices.Count -eq 0) { return $null }
 
     foreach ($dev in $devices) {
@@ -415,8 +546,15 @@ $cfg = Get-HelperConfig
 if ($Devices) {
     $all = @(Get-WinctrlDevice)
     if ($all.Count -eq 0) { Write-Log 'no WinWing (VID 0x4098) HID devices found' 'warn'; return }
-    $allowed = @(Select-ThrottleDevice -Config $cfg | ForEach-Object { $_.Path })
-    Write-Log ("deviceNameIncludes = [" + (@($cfg.deviceNameIncludes) -join ', ') + "]")
+    $active  = Get-ActiveThrottleGroup
+    $allowed = @(Select-ThrottleDevice | ForEach-Object { $_.Path })
+    # Which group is in force matters as much as which devices match it, so the
+    # active one is starred rather than left to be inferred from the MATCH rows.
+    foreach ($g in @(Get-ThrottleGroups)) {
+        $mark = if ($active -and $g.label -eq $active.label) { '*' } else { ' ' }
+        Write-Log ("$mark $($g.label): match = [" + (@($g.match) -join ', ') +
+                   "], throttlePid = $($g.throttlePid), $(@($g.ratios).Count) ratios")
+    }
     foreach ($d in $all) {
         $mark = if ($allowed -contains $d.Path) { 'MATCH ' } else { '  -   ' }
         Write-Log ("$mark $($d.ProductId)  $($d.Product)")

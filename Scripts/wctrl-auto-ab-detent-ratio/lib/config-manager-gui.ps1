@@ -13,8 +13,9 @@
     or written here - it is an Electron app that rewrites its whole config from
     memory, so anything written behind its back is silently discarded.
 
-    Only the "ratios" array is rewritten on save; the comments and every other
-    setting in config.json are left byte-for-byte alone.
+    Only one throttle's "ratios" array is rewritten on save; the comments,
+    every other throttle and every other setting in config.json are left
+    byte-for-byte alone.
 #>
 
 [CmdletBinding()]
@@ -52,22 +53,27 @@ function Read-Config {
     catch { throw "config.json is not valid JSON:`n$($_.Exception.Message)" }
 }
 
-function Write-ConfigRatios {
+function Get-JsonArraySpan {
     <#
-        Replace only the "ratios" array, by locating its span and splicing. A
-        ConvertTo-Json round-trip would reflow the file and throw away the
-        _comment_ keys that document every setting.
+        Offsets of the array that follows "Key": , as @{ Open; Close } - the
+        positions of its own '[' and ']'. Searching a window rather than the
+        whole file is what lets one throttle's inner "ratios" be found without
+        tripping over another's.
+
+        Walks the text tracking string state, so a bracket inside a string - or
+        an escaped quote - does not throw the depth count off.
     #>
-    param([Parameter(Mandatory)][array]$Ratios)
+    param([string]$Raw, [string]$Key, [int]$From = 0, [int]$To = -1)
 
-    $raw = [IO.File]::ReadAllText($configPath)
-    $m = [regex]::Match($raw, '"ratios"\s*:\s*\[')
-    if (-not $m.Success) { throw 'config.json has no "ratios" array.' }
+    if ($To -lt 0) { $To = $Raw.Length }
+    $window = $Raw.Substring($From, $To - $From)
+    $m = [regex]::Match($window, '"' + [regex]::Escape($Key) + '"\s*:\s*\[')
+    if (-not $m.Success) { return $null }
 
-    $open = $m.Index + $m.Length - 1
-    $depth = 0; $inStr = $false; $esc = $false; $end = -1
-    for ($i = $open; $i -lt $raw.Length; $i++) {
-        $c = $raw[$i]
+    $open  = $From + $m.Index + $m.Length - 1
+    $depth = 0; $inStr = $false; $esc = $false
+    for ($i = $open; $i -lt $To; $i++) {
+        $c = $Raw[$i]
         if ($inStr) {
             if ($esc) { $esc = $false }
             elseif ($c -eq '\') { $esc = $true }
@@ -76,20 +82,104 @@ function Write-ConfigRatios {
         }
         if ($c -eq '"') { $inStr = $true; continue }
         if ($c -eq '[') { $depth++; continue }
-        if ($c -eq ']') { $depth--; if ($depth -eq 0) { $end = $i; break } }
+        if ($c -eq ']') { $depth--; if ($depth -eq 0) { return @{ Open = $open; Close = $i } } }
     }
-    if ($end -lt 0) { throw 'config.json: the "ratios" array is not terminated.' }
+    return $null
+}
 
-    if ($Ratios.Count -eq 0) {
-        $body = '[]'
-    } else {
-        $rows = $Ratios | ForEach-Object {
-            '        {{ "name": {0,-9} "ratio": {1} }}' -f ('"' + $_.name + '",'), [int]$_.ratio
+function Get-JsonObjectSpans {
+    <#
+        The immediate { } members of the array between $Open and $Close, in
+        order, as @{ Start; End }. One entry per throttle group, so a group can
+        be addressed by its position in the file.
+    #>
+    param([string]$Raw, [int]$Open, [int]$Close)
+
+    $spans = @()
+    $depth = 0; $inStr = $false; $esc = $false; $start = -1
+    for ($i = $Open + 1; $i -lt $Close; $i++) {
+        $c = $Raw[$i]
+        if ($inStr) {
+            if ($esc) { $esc = $false }
+            elseif ($c -eq '\') { $esc = $true }
+            elseif ($c -eq '"') { $inStr = $false }
+            continue
         }
-        $body = "[" + [Environment]::NewLine + ($rows -join ("," + [Environment]::NewLine)) + [Environment]::NewLine + "    ]"
+        if ($c -eq '"') { $inStr = $true; continue }
+        if ($c -eq '{') { if ($depth -eq 0) { $start = $i }; $depth++; continue }
+        if ($c -eq '}') {
+            $depth--
+            if ($depth -eq 0 -and $start -ge 0) { $spans += @{ Start = $start; End = $i }; $start = -1 }
+        }
+    }
+    return $spans
+}
+
+function Format-RatioBody {
+    <#
+        The rows exactly as deploy.ps1's Format-RatioRows writes them, so a save
+        and an install produce the same bytes and neither churns the other's
+        work. Column width follows the longest name; -Indent is the column the
+        closing bracket sits at.
+    #>
+    param([array]$Ratios, [int]$Indent, [string]$NewLine)
+
+    if ($Ratios.Count -eq 0) { return '[]' }
+
+    $names = @($Ratios | ForEach-Object { (([string]$_.name) | ConvertTo-Json -Compress) + ',' })
+    $w = 9
+    foreach ($n in $names) { if ($n.Length -gt $w) { $w = $n.Length } }
+
+    $fmt  = (' ' * ($Indent + 4)) + '{{ "name": {0,' + (-$w) + '} "ratio": {1} }}'
+    $rows = @()
+    for ($i = 0; $i -lt $Ratios.Count; $i++) {
+        $rows += $fmt -f $names[$i], ([int]$Ratios[$i].ratio)
+    }
+    return '[' + $NewLine + ($rows -join (',' + $NewLine)) + $NewLine + (' ' * $Indent) + ']'
+}
+
+function Write-ConfigRatios {
+    <#
+        Replace one throttle's "ratios" array, by locating its span and
+        splicing. A ConvertTo-Json round-trip would reflow the file and throw
+        away the _comment_ keys that document every setting - and, now that
+        there can be more than one table, would rewrite tables this window was
+        never showing.
+
+        -GroupIndex is the group's position in "throttles". -1 means a config
+        the installer has not migrated yet, whose single table is still at the
+        top level; that path writes back exactly where it read from rather than
+        upgrading the file behind the installer's back.
+
+        The spans are re-derived from the file as it is on disk right now, not
+        from anything cached at startup, so a save cannot land on stale offsets.
+    #>
+    param([Parameter(Mandatory)][array]$Ratios, [int]$GroupIndex = -1)
+
+    $raw = [IO.File]::ReadAllText($configPath)
+    # Follow the file's own line endings rather than the platform's, so a save
+    # does not leave it half CRLF and half LF.
+    $nl  = if ($raw.Contains("`r`n")) { "`r`n" } else { "`n" }
+
+    if ($GroupIndex -lt 0) {
+        $span = Get-JsonArraySpan -Raw $raw -Key 'ratios'
+        if (-not $span) { throw 'config.json has no "ratios" array.' }
+        $indent = 4
+    } else {
+        $throttles = Get-JsonArraySpan -Raw $raw -Key 'throttles'
+        if (-not $throttles) { throw 'config.json has no "throttles" array.' }
+        $objects = @(Get-JsonObjectSpans -Raw $raw -Open $throttles.Open -Close $throttles.Close)
+        if ($GroupIndex -ge $objects.Count) {
+            throw "config.json no longer has a throttle #$($GroupIndex + 1). Reopen this window."
+        }
+        $obj  = $objects[$GroupIndex]
+        $span = Get-JsonArraySpan -Raw $raw -Key 'ratios' -From $obj.Start -To ($obj.End + 1)
+        if (-not $span) { throw 'that throttle has no "ratios" array in config.json.' }
+        $indent = 12
     }
 
-    $updated = $raw.Substring(0, $open) + $body + $raw.Substring($end + 1)
+    $body    = Format-RatioBody -Ratios $Ratios -Indent $indent -NewLine $nl
+    $updated = $raw.Substring(0, $span.Open) + $body + $raw.Substring($span.Close + 1)
     [void]($updated | ConvertFrom-Json)   # never write something we cannot read back
 
     $tmp = "$configPath.tmp"
@@ -143,18 +233,91 @@ function Clear-DetectedAircraft {
 
 . (Join-Path $scriptDir 'WinctrlHid.ps1')
 
+function Test-DeviceMatch {
+    <#
+        Does this device belong to this throttle group? 'match' is a list of
+        case-insensitive substrings and a device qualifies if its product string
+        contains ANY of them; an empty list accepts any device from this vendor.
+        Same rule as helper.ps1's Select-MatchingDevice - deliberately
+        brand-agnostic, because the vendor rebranded twice (WinWing -> WinUSA ->
+        WinCtrl) and the same model reports under all three.
+    #>
+    param($Group, $Device)
+
+    $filters = @($Group.match)
+    if ($filters.Count -eq 0) { return $true }
+    $upper = ([string]$Device.Product).ToUpperInvariant()
+    foreach ($f in $filters) { if ($upper.Contains(([string]$f).ToUpperInvariant())) { return $true } }
+    return $false
+}
+
+function Get-ThrottleGroups {
+    <#
+        The throttle groups in config.json, each carrying its INDEX in the
+        "throttles" array so a save can find its way back to the right one.
+
+        A config the installer has not migrated yet has no "throttles" at all -
+        one global table with the device gates beside it at the top level. That
+        is read as a single group with index -1, which Write-ConfigRatios treats
+        as "write back where you found it".
+    #>
+    param($Config)
+
+    if ($Config.PSObject.Properties['throttles']) {
+        $out = @()
+        $i = 0
+        foreach ($g in @($Config.throttles)) {
+            $out += [pscustomobject]@{
+                index       = $i
+                match       = @($g.match | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                label       = [string]$g.label
+                throttlePid = [int]$g.throttlePid
+                ratios      = @($g.ratios)
+            }
+            $i++
+        }
+        return $out
+    }
+
+    return @([pscustomobject]@{
+        index       = -1
+        match       = @($Config.deviceNameIncludes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        label       = ''
+        throttlePid = [int]$Config.throttlePid
+        ratios      = @($Config.ratios)
+    })
+}
+
+function Select-ActiveGroup {
+    <#
+        The group whose table this window edits: the first one that finds a
+        device actually plugged in.
+
+        With a single group - what ships, and what almost every install will
+        ever have - there is nothing to choose between, so no enumeration
+        happens. With nothing connected, or nothing matching any group, fall
+        back to the first, so the window still opens and still shows a table
+        rather than erroring on a throttle that is merely unplugged.
+    #>
+    param([array]$Groups)
+
+    if ($Groups.Count -eq 0) { return $null }
+    if ($Groups.Count -eq 1) { return $Groups[0] }
+
+    foreach ($g in $Groups) {
+        foreach ($dev in @(Get-WinctrlDevice -ProductId ([int]$g.throttlePid))) {
+            if (Test-DeviceMatch -Group $g -Device $dev) { return $g }
+        }
+    }
+    return $Groups[0]
+}
+
 function Use-Throttle {
     <# Open the throttle, run a scriptblock, always close. $null if not found. #>
-    param([Parameter(Mandatory)][scriptblock]$Action, [Parameter(Mandatory)]$Config)
+    param([Parameter(Mandatory)][scriptblock]$Action, [Parameter(Mandatory)]$Group)
 
-    $filters = @($Config.deviceNameIncludes | Where-Object { $_ })
-    foreach ($dev in @(Get-WinctrlDevice -ProductId ([int]$Config.throttlePid))) {
-        if ($filters.Count -gt 0) {
-            $upper = ([string]$dev.Product).ToUpperInvariant()
-            $ok = $false
-            foreach ($f in $filters) { if ($upper.Contains(([string]$f).ToUpperInvariant())) { $ok = $true; break } }
-            if (-not $ok) { continue }
-        }
+    foreach ($dev in @(Get-WinctrlDevice -ProductId ([int]$Group.throttlePid))) {
+        if (-not (Test-DeviceMatch -Group $Group -Device $dev)) { continue }
         $hid = $null
         try { $hid = Open-WinctrlDevice -Device $dev } catch { continue }
         try {
@@ -166,8 +329,8 @@ function Use-Throttle {
 }
 
 function Get-CurrentRatio {
-    param($Config)
-    return Use-Throttle -Config $Config -Action {
+    param($Group)
+    return Use-Throttle -Group $Group -Action {
         param($hid, $part, $dev)
         [pscustomobject]@{
             Percent = Get-WinctrlAfterburnerRatio -Hid $hid -PartId $part.PartId
@@ -179,8 +342,8 @@ function Get-CurrentRatio {
 function Clear-CurrentRatio {
     <# Writes FF FF FF FF - the device's "Inactivated" state, no afterburner
        mapping at all. Does not disturb the detent calibration. #>
-    param($Config)
-    return Use-Throttle -Config $Config -Action {
+    param($Group)
+    return Use-Throttle -Group $Group -Action {
         param($hid, $part, $dev)
         # Return a marker, not the read-back ratio. A cleared device reports
         # Inactivated, which reads back as $null - the same value Use-Throttle
@@ -192,8 +355,8 @@ function Clear-CurrentRatio {
 }
 
 function Set-CurrentRatio {
-    param($Config, [int]$Percent)
-    return Use-Throttle -Config $Config -Action {
+    param($Group, [int]$Percent)
+    return Use-Throttle -Group $Group -Action {
         param($hid, $part, $dev)
         Set-WinctrlAfterburnerRatio -Hid $hid -PartId $part.PartId -Percent $Percent
     }
@@ -278,10 +441,21 @@ function Test-IsNewer {
 
 # --------------------------------------------------------------------- UI ---
 
-$cfg     = Read-Config
+$cfg = Read-Config
+
+# Which throttle's table this window is editing. Resolved once, at startup: the
+# answer only changes if someone replugs a different throttle, and a window that
+# silently swapped which table it was editing mid-edit would be worse than one
+# that needs reopening.
+$script:groups = @(Get-ThrottleGroups -Config $cfg)
+$script:group  = Select-ActiveGroup -Groups $script:groups
+if (-not $script:group) {
+    throw "config.json has no throttles in it:`n$configPath"
+}
+
 $ratios  = New-Object System.Collections.ArrayList
 $skipped = New-Object System.Collections.ArrayList
-foreach ($r in @($cfg.ratios)) {
+foreach ($r in @($script:group.ratios)) {
     if (-not $r.name) { continue }
     # A hand-edited ratio outside a whole 0..100 is left out of the table rather
     # than shown: the throttle refuses it, so a row you can see and select but
@@ -305,9 +479,9 @@ if (Test-Path -LiteralPath $iconPath) {
 $form.Size = New-Object System.Drawing.Size(560, 560)
 $form.StartPosition = 'CenterScreen'
 # Raised by the same 16px the list and the button column moved down for the
-# "Last detected" label, so shrinking to the minimum leaves exactly the gap
-# between Refresh and Save that it always had.
-$form.MinimumSize = New-Object System.Drawing.Size(480, 476)
+# "Last detected" label, and again by 22px for the throttle header, so shrinking
+# to the minimum leaves exactly the gap between Refresh and Save it always had.
+$form.MinimumSize = New-Object System.Drawing.Size(480, 498)
 
 $lblDevice = New-Object System.Windows.Forms.Label
 $lblDevice.Location = New-Object System.Drawing.Point(12, 12)
@@ -323,9 +497,19 @@ $lblDetected.Text = 'Last detected: none'
 $lblDetected.Anchor = 'Top,Left,Right'
 $form.Controls.Add($lblDetected)
 
+# Which throttle the table below belongs to. Static: there is nothing to
+# choose between until someone owns a second throttle, and the helper and this
+# window resolve that the same way - by what is plugged in.
+$lblGroup = New-Object System.Windows.Forms.Label
+$lblGroup.Location = New-Object System.Drawing.Point(12, 72)
+$lblGroup.Size = New-Object System.Drawing.Size(400, 18)
+$lblGroup.Anchor = 'Top,Left,Right'
+$lblGroup.Font = New-Object System.Drawing.Font($lblGroup.Font, [System.Drawing.FontStyle]::Bold)
+$form.Controls.Add($lblGroup)
+
 $list = New-Object System.Windows.Forms.ListView
-$list.Location = New-Object System.Drawing.Point(12, 70)
-$list.Size = New-Object System.Drawing.Size(400, 364)
+$list.Location = New-Object System.Drawing.Point(12, 92)
+$list.Size = New-Object System.Drawing.Size(400, 342)
 $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.MultiSelect = $false
@@ -492,6 +676,33 @@ function Update-Highlight {
     }
 }
 
+function Update-GroupLabel {
+    <#
+        Name the throttle whose table is on screen. Always shown, even with the
+        single group that ships: the point is that the table belongs to a
+        device, which is not obvious from a bare list.
+
+        Whether that device is actually present comes from the same read that
+        fills the device line, so the header cannot claim a throttle is there
+        when the line above it says otherwise.
+    #>
+    param([bool]$Connected)
+
+    $name = if ([string]::IsNullOrWhiteSpace($script:group.label)) {
+        if (@($script:group.match).Count) { @($script:group.match) -join ', ' } else { 'Any WinWing throttle' }
+    } else { $script:group.label }
+
+    if ($Connected) {
+        $lblGroup.ForeColor = [System.Drawing.Color]::Black
+        $lblGroup.Text = "Ratios for: $name"
+    } else {
+        $lblGroup.ForeColor = [System.Drawing.Color]::DimGray
+        $suffix = if ($script:groups.Count -gt 1) { ' (not detected - showing the first table)' }
+                  else { ' (not detected)' }
+        $lblGroup.Text = "Ratios for: $name$suffix"
+    }
+}
+
 function Update-DetectedLabel {
     if (-not $script:detected) {
         $lblDetected.ForeColor = [System.Drawing.Color]::DimGray
@@ -650,7 +861,7 @@ function Move-Selected {
     Update-List -SelectIndex $to
 }
 
-[void](New-Button 'Add' 70 {
+[void](New-Button 'Add' 92 {
     $r = Show-EntryDialog
     if (-not $r) { return }
     $clash = $ratios | Where-Object { $_.name -ieq $r.name } | Select-Object -First 1
@@ -681,9 +892,9 @@ $editAction = {
     $sel.name = $r.name; $sel.ratio = $r.ratio
     Update-List -SelectName $r.name
 }
-$btnEdit = New-Button 'Edit' 108 $editAction 'Change the selected entry'
+$btnEdit = New-Button 'Edit' 130 $editAction 'Change the selected entry'
 
-$btnDelete = New-Button 'Delete' 146 {
+$btnDelete = New-Button 'Delete' 168 {
     $sel = Get-Selected
     if (-not $sel) { return }
     if ($sel.name -ieq 'NONE') { return }
@@ -693,11 +904,11 @@ $btnDelete = New-Button 'Delete' 146 {
     Update-List
 } 'Remove the selected entry'
 
-$btnUp = New-Button 'Move Up' 184 { Move-Selected -Delta -1 } 'Move the selected entry one row up'
+$btnUp = New-Button 'Move Up' 206 { Move-Selected -Delta -1 } 'Move the selected entry one row up'
 
-$btnDown = New-Button 'Move Down' 222 { Move-Selected -Delta 1 } 'Move the selected entry one row down'
+$btnDown = New-Button 'Move Down' 244 { Move-Selected -Delta 1 } 'Move the selected entry one row down'
 
-[void](New-Button 'A-Z' 260 {
+[void](New-Button 'A-Z' 282 {
     if ($ratios.Count -lt 2) { return }
     # NONE sorts to the top rather than under N, and this is also the only way
     # to get it back there if an older config has it somewhere in the middle.
@@ -710,12 +921,12 @@ $btnDown = New-Button 'Move Down' 222 { Move-Selected -Delta 1 } 'Move the selec
     if ($keep) { Update-List -SelectIndex $ratios.IndexOf($keep) } else { Update-List }
 } 'Sort the table A-Z, keeping NONE at the top')
 
-$btnActivate = New-Button 'Activate' 310 {
+$btnActivate = New-Button 'Activate' 332 {
     $sel = Get-Selected
     if (-not $sel) { return }
     $form.Cursor = 'WaitCursor'
     try {
-        $applied = Set-CurrentRatio -Config $cfg -Percent $sel.ratio
+        $applied = Set-CurrentRatio -Group $script:group -Percent $sel.ratio
         if ($null -eq $applied) {
             [void][System.Windows.Forms.MessageBox]::Show($form,
                 "Could not reach the throttle.`n`nIf this is the first time, calibrate the afterburner detent in SimAppPro - until then there is no ratio to set.",
@@ -731,14 +942,14 @@ $btnActivate = New-Button 'Activate' 310 {
     } finally { $form.Cursor = 'Default' }
 } 'Apply this ratio to the throttle now'
 
-[void](New-Button 'Restore Default' 348 {
+[void](New-Button 'Restore Default' 370 {
     $answer = [System.Windows.Forms.MessageBox]::Show($form,
         "Restore the throttle to how it ships?`r`n`r`nThe detent goes back to having no afterburner mapping. Your table is not touched, and the detent calibration is left alone.",
         'Restore default', 'YesNo', 'Question')
     if ($answer -ne 'Yes') { return }
     $form.Cursor = 'WaitCursor'
     try {
-        $r = Clear-CurrentRatio -Config $cfg
+        $r = Clear-CurrentRatio -Group $script:group
         if ($null -eq $r) {
             [void][System.Windows.Forms.MessageBox]::Show($form, 'Could not reach the throttle.', 'Throttle not found', 'OK', 'Warning')
         } else { Refresh-Device }
@@ -747,7 +958,7 @@ $btnActivate = New-Button 'Activate' 310 {
     } finally { $form.Cursor = 'Default' }
 } 'Put the throttle back to how it ships, with no ratio applied')
 
-[void](New-Button 'Refresh' 386 { Refresh-Device } 'Re-read the value currently on the throttle')
+[void](New-Button 'Refresh' 408 { Refresh-Device } 'Re-read the value currently on the throttle')
 
 function Update-ButtonState {
     <# Every row-scoped button is dead without a selection, so none stay lit. #>
@@ -774,7 +985,8 @@ function Refresh-Device {
     $script:detected = Read-State
     Update-DetectedLabel
     try {
-        $cur = Get-CurrentRatio -Config $cfg
+        $cur = Get-CurrentRatio -Group $script:group
+        Update-GroupLabel -Connected ($null -ne $cur)
         if ($null -eq $cur) {
             $script:currentPercent = $null
             $lblDevice.ForeColor = [System.Drawing.Color]::Firebrick
@@ -787,6 +999,7 @@ function Refresh-Device {
         }
     } catch {
         $script:currentPercent = $null
+        Update-GroupLabel -Connected $false
         $lblDevice.ForeColor = [System.Drawing.Color]::Firebrick
         $lblDevice.Text = "Could not read the throttle: $($_.Exception.Message)"
     }
@@ -807,7 +1020,7 @@ $btnSave.Size = New-Object System.Drawing.Size(100, 34)
 $btnSave.Anchor = 'Bottom,Right'
 $btnSave.Add_Click({
     try {
-        Write-ConfigRatios -Ratios @($ratios)
+        Write-ConfigRatios -Ratios @($ratios) -GroupIndex $script:group.index
         $btnSave.Text = 'Saved'
         $form.Refresh()
         Start-Sleep -Milliseconds 400
@@ -845,7 +1058,7 @@ $form.Add_FormClosing({
     $answer = [System.Windows.Forms.MessageBox]::Show($form, 'Save your changes before closing?', 'Unsaved changes', 'YesNoCancel', 'Question')
     if ($answer -eq 'Cancel') { $_.Cancel = $true; return }
     if ($answer -eq 'Yes') {
-        try { Write-ConfigRatios -Ratios @($ratios) }
+        try { Write-ConfigRatios -Ratios @($ratios) -GroupIndex $script:group.index }
         catch {
             [void][System.Windows.Forms.MessageBox]::Show($form, $_.Exception.Message, 'Could not save', 'OK', 'Error')
             $_.Cancel = $true
@@ -855,6 +1068,7 @@ $form.Add_FormClosing({
 $btnSave.Add_Click({ $script:savedSnapshot = ($ratios | ForEach-Object { "$($_.name)=$($_.ratio)" }) -join '|' })
 $script:savedSnapshot = $savedSnapshot
 
+Update-GroupLabel -Connected $false
 Update-List
 $form.Add_Shown({
     $form.Activate()
