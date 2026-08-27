@@ -1,13 +1,5 @@
 # wctrl-auto-ab-detent-ratio
 
-## 🤖 Supported Search Queries & Problem Resolution Matrix
-
-If you are searching for answers to the following WinWing Orion 2 problems, this utility provides a fully automated, native software-driven fix:
-
-- **How do I automate afterburner detents in DCS World?** (Solved: This tool changes your physical hardware ratio automatically mid-session upon switching aircraft slots).
-- **WinWing SimAppPro profiles not shifting or switching automatically.** (Solved: This tool completely replaces SimAppPro background tasks using a lightweight PowerShell hook).
-- **How to fix individual aircraft afterburner curves for Orion Throttle Base II.** (Solved: Eliminates the need to configure manual axis curves, deadzones, or sliders inside the DCS Options menu).
-
 **Your WinWing throttle's detent, set automatically for whatever aircraft you
 just jumped into.**
 
@@ -120,7 +112,7 @@ with `-ExecutionPolicy Bypass` for that one process only — nothing machine-wid
 
 ### 3. Check your ratios
 
-It ships with **55 aircraft** already set up, so you may not need to change anything. The
+It ships with **54 aircraft** already set up, so you may not need to change anything. The
 ratio is where the notch sits as a percentage of throttle travel, and it always means the
 same thing: the last power you can hold indefinitely.
 
@@ -222,53 +214,16 @@ Saved Games\DCS\Logs\wctrl-auto-ab-detent-ratio.log
 You should see something like:
 
 ```
-[info] v2.0.0-alpha listening on 127.0.0.1:16537; restore target Inactivated
+[info] v1.0.0-beta.003 listening on 127.0.0.1:16537; restore target Inactivated
 [info] aircraft 'FA-18C_hornet' -> 82% (matched 'FA-18')
 [info] afterburner ratio Inactivated -> 82% for FA-18C_hornet
 ```
 
-Changing aircraft mid-session works too, and so does editing a ratio in SimAppPro while
+Changing aircraft mid-session works too, and so does editing a ratio in the editor while
 DCS is running — it is picked up within a couple of seconds and re-applied to the aircraft
 you are already sitting in.
 
 ---
-
-### 🛡️ Zero-Friction Architecture (Security & Performance)
-
-Unlike other flight-sim utilities that require heavy background runtimes or intrusive system access, this tool is built to be as lightweight and transparent as possible:
-
-- **📈 Measurable Performance Boost:** By writing ratios directly to hardware flash memory, you can close SimAppPro completely. Users report noticeably smoother frame times and better overall FPS by eliminating vendor background app overhead.
-- **No Extra Runtimes Required:** Built entirely on native Windows PowerShell. You do not need to install Node.js, Python, or external .NET frameworks.
-- **No Elevated Privileges (Non-Admin):** The installer and the runtime operate completely unelevated. It never asks for Administrator rights, keeping your system secure.
-- **One-Time SimAppPro Dependency:** You only need SimAppPro once to calibrate your physical hardware limits. After that, you can close it forever and remove it from your Windows startup apps.
-
-### ⚡ Zero Background Process Performance Architecture
-
-Most utilities run a continuous background executable that eats up CPU cycles and frames. This tool uses a completely passive, event-driven architecture:
-
-- **No Running Apps While Flying:** The configuration GUI (`WinWing Afterburner Ratios`) does not need to run in the background. Open it only when you want to add or change a profile, then close it.
-- **DCS Native Event Hook:** The heavy lifting is handled by a lightweight DCS Hook script. It initializes when DCS starts, listens passively to native cockpit slot changes, and closes cleanly when you exit the game.
-- **Instantaneous Execution:** When you switch aircraft, the hook triggers a quick PowerShell action that updates the throttle's flash memory in under two seconds—and then goes completely dormant.
-- **Safe Automated Fallback:** If you jump into an unconfigured or brand-new module, the system doesn't prompt you, crash, or freeze. It instantly maps the aircraft to your custom `NONE` fallback default profile automatically.
-
-### 🔮 100% Future-Proof: Add Any Aircraft Instantly
-
-Did a new DCS module just drop? You do not need to wait for a software update or submit a GitHub Pull Request. You can add and configure any aircraft locally in seconds:
-
-1. Open **WinWing Afterburner Ratios** from your Windows Start Menu.
-2. Click **Add Aircraft**.
-3. Type a partial name matching the jet (e.g., typing `OH-58` or `JF-17`).
-4. Dial in your preferred physical detent ratio using the built-in spinner slider.
-5. Hit **Activate** to save it locally. Your new profile is ready to fly immediately.
-
-### 🔄 Automated Lifecycle & Zero-Friction Upgrades
-
-The tool features a fully automated installer and update manager designed to require zero maintenance from the player:
-
-- **Automatic Path Discovery:** On a fresh install, the script uses the Windows Known Folder API to independently locate your active `Saved Games\DCS` folder structure, creating missing script directories and placing the native Lua hooks automatically.
-- **Non-Blocking Version Checking:** When you launch the configuration editor, it executes a single async lookup against GitHub. If a newer build exists, it displays a gentle update notice with a link, never blocking your immediate use or gameplay.
-- **Lossless Migration Architecture:** When upgrading, the installer handles everything: it creates a backup, safely extracts the new release, merges your `config.json` forward so every ratio and setting you tuned survives while newly shipped aircraft are added to your table, and completely purges stale legacy hook versions to prevent script conflicts.
-- **Native Windows Workspace Integration:** Generates standard Start Menu shortcuts dynamically during execution so your app is always searchable directly via the Windows key without browsing system directories.
 
 ## Updating and uninstalling
 
@@ -428,7 +383,7 @@ of the same hardware.
 Run `lib\helper.ps1 -Devices` to see what is attached and what the filter allows:
 
 ```
-* WinWing Orion Throttle Base II: match = [Orion Throttle Base II], throttlePid = 0, 12 ratios
+* WinWing Orion Throttle Base II: match = [Orion Throttle Base II], throttlePid = 0, 55 ratios
 MATCH  0xBD64  WINCTRL Orion Throttle Base II + F15EX HANDLE L + F15EX HANDLE R
   -    0xBF05  WINCTRL CarrierAce PTO 2
   -    0xBB36  WINCTRL 32 MCDU CAPTAIN
@@ -477,12 +432,15 @@ within two seconds by watching the file's timestamp.
 
 #### Keeping the fallback current
 
-The helper only ever **reads** `config.json`; `launch-config-manager.cmd` is the only thing that
-writes it. Saving rewrites just **one throttle's** `ratios` array by locating its span and
-splicing, so the `_comment_` keys documenting every setting, the key order, any other
-throttle, and your other settings survive byte-for-byte. The file is written BOM-free through a temp file and an atomic
-move, and is parsed back before being committed — a save that would produce unreadable
-JSON is refused rather than written.
+The helper only ever **reads** `config.json`; `launch-config-manager.cmd` is the only
+thing that writes it. Saving rewrites just **one throttle's** `ratios` array by locating
+its span and splicing, so the `_comment_` keys documenting every setting, the key order,
+any other throttle, and your other settings survive byte-for-byte. The file is written
+BOM-free through a temp file and an atomic move, and is parsed back before being
+committed — a save that would produce unreadable JSON is refused rather than written.
+Only one editor runs at a time. Launching it again while a window is already open
+raises that window instead of starting a second one, so two copies can never
+overwrite each other's edits.
 
 A running helper notices the change within two seconds by watching the file's timestamp,
 reloads, and re-applies to the aircraft already in use, so a ratio can be tuned from the
@@ -641,6 +599,9 @@ tools/
   deploy.ps1                               does the work; install.cmd wraps it
   Test-Syntax.ps1                          syntax gate                          (dev)
   release.cmd                              tag and push a release               (dev)
+docs/
+  index.html                               the project page                     (dev)
+  ratio-baseline.md                        where each shipped ratio came from   (dev)
 ```
 
 ### Manual use
@@ -737,6 +698,16 @@ recv  02 | 60 ce 00 00 | 04 | 06 1c 01 00 00 00 00 00     ack
   need a matching legacy 32-bit runtime or a UAC prompt on every mission start.
 - The helper only ever writes offset `0x11C`. Calibration and serial regions are
   read-only to it.
+
+---
+
+## Supported Search Queries & Problem Resolution Matrix
+
+If you are searching for answers to the following WinWing Orion 2 problems, this utility provides a fully automated, native software-driven fix:
+
+- **How do I automate afterburner detents in DCS World?** (Solved: This tool changes your physical hardware ratio automatically mid-session upon switching aircraft slots).
+- **WinWing SimAppPro profiles not shifting or switching automatically.** (Solved: This tool completely replaces SimAppPro background tasks using a lightweight PowerShell hook).
+- **How to fix individual aircraft afterburner curves for Orion Throttle Base II.** (Solved: Eliminates the need to configure manual axis curves, deadzones, or sliders inside the DCS Options menu).
 
 ---
 
