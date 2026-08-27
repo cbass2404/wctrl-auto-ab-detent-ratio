@@ -1,6 +1,9 @@
 {
     "_comment": "Settings for the WinWing auto afterburner-detent-ratio helper. Edit with launch-config-manager.cmd, or by hand here. This file is the source of truth for ratios - SimAppPro is only needed once, to calibrate the afterburner detent.",
 
+    "_comment_configVersion": "Schema version of this file, so the installer knows what it is looking at. 1 had a single global 'ratios' table plus top-level 'deviceNameIncludes' and 'throttlePid'; 2 moves all three inside 'throttles' so each throttle carries its own table. The installer migrates 1 to 2 for you and keeps a backup. Do not edit this by hand.",
+    "configVersion": 2,
+
     "_comment_port": "UDP port to listen on. 16537 is the 'debug' port WinWing's wwtNetwork.lua already broadcasts every message to; 16535 and 16536 belong to SimAppPro.",
     "port": 16537,
 
@@ -9,12 +12,6 @@
 
     "_comment_noMatchRatio": "Used inside DCS when an aircraft matches no table entry AND the table has no NONE entry. Unrelated to restoreRatio: this one keeps the throttle usable in an unrecognised aircraft rather than neutralising it.",
     "noMatchRatio": 75,
-
-    "_comment_deviceNameIncludes": "Only touch devices whose product name contains one of these (case-insensitive substrings). Keeps the helper off other WinWing gear - an Orion Throttle Base I, a second stick - that might also report afterburner calibration. Match the MODEL, not the brand: the vendor rebranded twice (WinWing -> WinUSA -> WinCtrl) in about 18 months, so the same model reports as 'WINWING ...', 'WINUSA ...' or 'WINCTRL ...' depending on firmware age. Use [] to accept any WinWing device. Run 'helper.ps1 -Devices' to see the exact names attached.",
-    "deviceNameIncludes": [ "Orion Throttle Base II" ],
-
-    "_comment_throttlePid": "USB product id to restrict the search to; 0 searches every WinWing device for one with afterburner calibration. 48484 = 0xBD64 = Orion Throttle Base II.",
-    "throttlePid": 0,
 
     "_comment_heartbeatTimeoutMs": "Restore the neutral ratio if no datagram arrives for this long while a mission is live. wwtExport.lua sends a heartbeat every 3s, so this catches a DCS crash.",
     "heartbeatTimeoutMs": 15000,
@@ -25,19 +22,35 @@
     "_comment_checkForUpdates": "launch-config-manager.cmd asks GitHub for the newest release on startup and mentions it if you are behind. Never installs anything, and fails silently when offline. Set false to skip the check.",
     "checkForUpdates": true,
 
-    "_comment_ratios": "The ratio table. 'name' is matched as a case-insensitive substring of the DCS aircraft name, so 'FA-18' covers 'FA-18C_hornet'; on several matches the longest name wins. NONE never matches by name - it is the fallback used when nothing else hits. These values assume the physical detent is calibrated at the very end of its track; expect to nudge a few percent to taste.",
-    "ratios": [
-        { "name": "NONE",   "ratio": 100 },
-        { "name": "AJS37",  "ratio": 81 },
-        { "name": "C-130",  "ratio": 75 },
-        { "name": "F-14",   "ratio": 54 },
-        { "name": "F-15",   "ratio": 80 },
-        { "name": "F-16",   "ratio": 75 },
-        { "name": "F-4",    "ratio": 70 },
-        { "name": "F-5",    "ratio": 82 },
-        { "name": "F4U",    "ratio": 75 },
-        { "name": "FA-18",  "ratio": 82 },
-        { "name": "MiG-21", "ratio": 91 },
-        { "name": "MiG-29", "ratio": 60 }
+    "_comment_throttles": "One entry per throttle, each with its own ratio table. Almost everyone will only ever have one, and this ships with exactly one - the extra nesting exists so a second throttle can have different ratios rather than fighting over a shared table. The helper picks the entry whose 'match' finds a device that is actually plugged in, and the config manager edits that entry's table.",
+
+    "_comment_throttles_match": "Only touch devices whose product name contains one of these (case-insensitive substrings). Keeps the helper off other WinWing gear - an Orion Throttle Base I, a second stick - that might also report afterburner calibration. Match the MODEL, not the brand: the vendor rebranded twice (WinWing -> WinUSA -> WinCtrl) in about 18 months, so the same model reports as 'WINWING ...', 'WINUSA ...' or 'WINCTRL ...' depending on firmware age. Several substrings are allowed because one physical model can report under more than one of those names. Use [] to accept any WinWing device. Run 'helper.ps1 -Devices' to see the exact names attached.",
+
+    "_comment_throttles_label": "What to call this throttle in the config manager's window. Display only - matching never looks at it.",
+
+    "_comment_throttles_throttlePid": "USB product id to restrict the search to; 0 searches every WinWing device for one with afterburner calibration. 48484 = 0xBD64 = Orion Throttle Base II.",
+
+    "_comment_throttles_ratios": "The ratio table for this throttle. 'name' is matched as a case-insensitive substring of the DCS aircraft name, so 'FA-18' covers 'FA-18C_hornet'; on several matches the longest name wins. NONE never matches by name - it is the fallback used when nothing else hits. These values assume the physical detent is calibrated at the very end of its track; expect to nudge a few percent to taste.",
+
+    "throttles": [
+        {
+            "match":       [ "Orion Throttle Base II" ],
+            "label":       "WinWing Orion Throttle Base II",
+            "throttlePid": 0,
+            "ratios":      [
+                { "name": "NONE",   "ratio": 100 },
+                { "name": "AJS37",  "ratio": 81 },
+                { "name": "C-130",  "ratio": 75 },
+                { "name": "F-14",   "ratio": 54 },
+                { "name": "F-15",   "ratio": 80 },
+                { "name": "F-16",   "ratio": 75 },
+                { "name": "F-4",    "ratio": 70 },
+                { "name": "F-5",    "ratio": 82 },
+                { "name": "F4U",    "ratio": 75 },
+                { "name": "FA-18",  "ratio": 82 },
+                { "name": "MiG-21", "ratio": 91 },
+                { "name": "MiG-29", "ratio": 60 }
+            ]
+        }
     ]
 }

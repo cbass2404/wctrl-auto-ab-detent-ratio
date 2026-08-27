@@ -270,14 +270,15 @@ did not load — confirm `Scripts\Hooks\` contains a `wctrl-auto-ab-detent-ratio
 **"no afterburner-capable throttle part found".**
 The detent is not calibrated. Go back to step 1.
 
-**"no device matched deviceNameIncludes".**
-You are on different WinWing hardware. Run this to see what is attached:
+**"no device matched ... match [...]".**
+You are on different WinWing hardware. Run this to see what is attached, and which
+throttle entry is currently in force:
 
 ```powershell
 & "$env:USERPROFILE\Saved Games\DCS\Scripts\wctrl-auto-ab-detent-ratio-*\lib\helper.ps1" -Devices
 ```
 
-Then put a distinctive part of your throttle's name into `deviceNameIncludes` in
+Then put a distinctive part of your throttle's name into that entry's `match` list in
 `lib\config.json`. Match the **model**, not the brand — the vendor has been WinWing, WinUSA
 and WinCtrl in about 18 months, and the brand is baked into the product string.
 
@@ -338,13 +339,37 @@ where the wwt export is disabled entirely.
 
 ### Which device it touches
 
-Nothing is hardcoded. At startup the helper enumerates every WinWing HID device
-(VID `0x4098`), then narrows by two independent gates:
+Nothing is hardcoded. The ratio table lives inside a **throttle entry** in
+`config.json`, and that entry also carries the device it belongs to:
 
-1. **`deviceNameIncludes`** — case-insensitive substrings; a device qualifies if its
-   product name contains **any** of them. Default `[ "Orion Throttle Base II" ]`.
+```json
+"throttles": [
+    {
+        "match":       [ "Orion Throttle Base II" ],
+        "label":       "WinWing Orion Throttle Base II",
+        "throttlePid": 0,
+        "ratios":      [ { "name": "NONE", "ratio": 100 } ]
+    }
+]
+```
+
+The file ships with exactly one, and almost everyone will only ever have one. The nesting
+exists so that a second throttle can carry its own ratios rather than sharing a single
+table with the first.
+
+At startup the helper enumerates every WinWing HID device (VID `0x4098`), then narrows by
+two independent gates from the entry in force:
+
+1. **`match`** — case-insensitive substrings; a device qualifies if its product name
+   contains **any** of them. Default `[ "Orion Throttle Base II" ]`. `throttlePid`
+   restricts the search to one USB product id, or `0` for any.
 2. **Programmed afterburner calibration** at `0x114`/`0x118`, which picks the base out
    of the base + handles assembly.
+
+With more than one entry, the helper uses the **first one whose device is actually plugged
+in**, and logs which it picked and why. With nothing connected it falls back to the first
+entry, so the ratio editor still opens and still shows a table. Only one throttle is driven
+at a time; several at once is a separate piece of work.
 
 The part id (`0xBE60` here) is discovered by broadcast, never assumed, so swapping
 handles or throttles re-discovers correctly.
@@ -367,7 +392,7 @@ of the same hardware.
 Run `lib\helper.ps1 -Devices` to see what is attached and what the filter allows:
 
 ```
-deviceNameIncludes = [Orion Throttle Base II]
+* WinWing Orion Throttle Base II: match = [Orion Throttle Base II], throttlePid = 0, 12 ratios
 MATCH  0xBD64  WINCTRL Orion Throttle Base II + F15EX HANDLE L + F15EX HANDLE R
   -    0xBF05  WINCTRL CarrierAce PTO 2
   -    0xBB36  WINCTRL 32 MCDU CAPTAIN
@@ -375,7 +400,8 @@ MATCH  0xBD64  WINCTRL Orion Throttle Base II + F15EX HANDLE L + F15EX HANDLE R
   -    0xBEDE  WINCTRL CarrierAce UFC + CarrierAce HUD
 ```
 
-If the filter matches nothing the helper logs what it _did_ find and touches no device.
+The starred line is the throttle entry in force. If its filter matches nothing, the helper
+logs what it _did_ find and touches no device.
 
 ### Matching rules
 
@@ -412,9 +438,9 @@ within two seconds by watching the file's timestamp.
 #### Keeping the fallback current
 
 The helper only ever **reads** `config.json`; `launch-config-manager.cmd` is the only thing that
-writes it. Saving rewrites just the `ratios` array by locating its span and splicing, so
-the `_comment_` keys documenting every setting, the key order, and your other settings
-survive byte-for-byte. The file is written BOM-free through a temp file and an atomic
+writes it. Saving rewrites just **one throttle's** `ratios` array by locating its span and
+splicing, so the `_comment_` keys documenting every setting, the key order, any other
+throttle, and your other settings survive byte-for-byte. The file is written BOM-free through a temp file and an atomic
 move, and is parsed back before being committed — a save that would produce unreadable
 JSON is refused rather than written.
 
@@ -501,6 +527,14 @@ removed previous wctrl-auto-ab-detent-ratio-0.1-alpha
 removed previous hook wctrl-auto-ab-detent-ratio-0.1-alpha-hook.lua
 ```
 
+**The config format changed in v2, and the installer migrates it for you.** Before, one
+global `ratios` table sat beside `deviceNameIncludes` and `throttlePid` at the top level;
+now all three live inside a `throttles` entry, so each throttle carries its own table. The
+installer detects the old shape, folds it into a single entry with your matcher, your
+product id and your rows in your order, drops the three retired keys and stamps
+`configVersion: 2`. The result behaves identically — nobody has to do anything — and the
+pre-migration file is kept as `config.json.bak-<timestamp>`.
+
 **Every setting migrates, and an upgrade only ever adds.** The new version's shipped
 `config.json` is used as the skeleton — it brings the current comments, the current default
 ratio table, and any setting introduced since your version — and then every value you
@@ -513,6 +547,8 @@ already had is written back over it. So:
 - `NONE` is moved to the top of the table if it is not already there, so every installed
   config has it in the same known place;
 - a setting this release adds arrives at its default, since you have no opinion on it yet;
+- a throttle this release adds that you do not have is appended, and a throttle you added
+  yourself that this release does not ship is kept;
 - a setting the new version no longer ships is dropped, because the code that read it is
   gone.
 
@@ -556,7 +592,7 @@ Scripts/                                   mirrors DCS Saved Games\Scripts
       helper.ps1        UDP listener, aircraft->ratio matching, flash writes, watchdog
       WinctrlHid.ps1    Win32 HID layer + the reverse-engineered wire protocol
       config-manager-gui.ps1   the ratio editor window
-      config.json       settings + the ratio table (source of truth)
+      config.json       settings + a ratio table per throttle (source of truth)
       state.json        what DCS last reported; written by the helper, read by the editor
       run-hidden.vbs    starts a script with no console window
 install.cmd                                the installer - double-click this
