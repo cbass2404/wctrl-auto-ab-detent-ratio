@@ -82,7 +82,7 @@ $hookName    = "$baseName-hook-$version.lua"
 # release that has to correct a shipped default can flip it and no more.
 # -KeepConfig overrides a 'Replace' release for one install; -ForceConfig
 # overrides a 'Merge' one.
-$configPolicy = 'Replace'
+$configPolicy = 'Merge'
 
 # Anything from this project under any other name: earlier project names, and
 # any other version of this one. All of it gets removed after the new version is
