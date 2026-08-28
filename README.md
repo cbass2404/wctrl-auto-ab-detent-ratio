@@ -118,32 +118,33 @@ same thing: the last power you can hold indefinitely.
 
 **Afterburner gate** — past the notch is burner.
 
-| Aircraft | Ratio |     | Aircraft | Ratio |     | Aircraft    | Ratio |
-| -------- | ----- | --- | -------- | ----- | --- | ----------- | ----- |
-| `F-14`   | 54    |     | `JF-17`  | 75    |     | `EA-18`     | 82    |
-| `MiG-29` | 60    |     | `Su-27`  | 75    |     | `F-5`       | 82    |
-| `F-4`    | 70    |     | `Su-33`  | 75    |     | `FA-18`     | 82    |
-| `F-15E`  | 75    |     | `Su-34`  | 75    |     | `Mirage-F1` | 87    |
-| `F-16`   | 75    |     | `F-15C`  | 80    |     | `M-2000`    | 89    |
-| `J-11`   | 75    |     | `AJS37`  | 81    |     | `MiG-21`    | 91    |
+| Aircraft    | Ratio |     | Aircraft | Ratio |     | Aircraft  | Ratio |
+| ----------- | ----- | --- | -------- | ----- | --- | --------- | ----- |
+| `Mirage-F1` | 50    |     | `J-11`   | 75    |     | `EA-18`   | 82    |
+| `F-14`      | 54    |     | `Su-27`  | 75    |     | `F-5`     | 82    |
+| `MiG-29`    | 60    |     | `Su-33`  | 75    |     | `FA-18`   | 82    |
+| `F-4`       | 70    |     | `Su-34`  | 75    |     | `M-2000`  | 89    |
+| `F-15E`     | 75    |     | `F-15C`  | 79    |     | `JF-17`   | 91    |
+| `F-16`      | 75    |     | `AJS37`  | 81    |     | `MiG-21`  | 91    |
 
 **Emergency power gate** — past the notch is on the clock: WEP, water injection, MW-50,
-boost cut-out.
+boost cut-out, or a non-burner jet's short-time rating.
 
-| Aircraft | Ratio |     | Aircraft   | Ratio |     | Aircraft  | Ratio |
-| -------- | ----- | --- | ---------- | ----- | --- | --------- | ----- |
-| `A-6`    | 75    |     | `C-130`    | 85    |     | `TF-51`   | 90    |
-| `I-16`   | 80    |     | `Mosquito` | 85    |     | `AV8B`    | 91    |
-| `P-47`   | 80    |     | `Spitfire` | 85    |     | `FW-190A` | 92    |
-| `Bf-109` | 81    |     | `La-7`     | 90    |     | `F4U`     | 95    |
-| `C-101`  | 85    |     | `P-51`     | 90    |     | `F-86`    | 97    |
+| Aircraft   | Ratio |     | Aircraft  | Ratio |     | Aircraft   | Ratio |
+| ---------- | ----- | --- | --------- | ----- | --- | ---------- | ----- |
+| `Mosquito` | 55    |     | `C-101`   | 85    |     | `FW-190D`  | 92    |
+| `L-39`     | 70    |     | `C-130`   | 85    |     | `MB-339`   | 92    |
+| `A-4`      | 75    |     | `La-7`    | 90    |     | `P-51`     | 92    |
+| `A-6`      | 75    |     | `P-47`    | 90    |     | `TF-51`    | 92    |
+| `F4U`      | 75    |     | `AV8B`    | 91    |     | `Spitfire` | 95    |
+| `MiG-15`   | 75    |     | `Bf-109`  | 92    |     | `F-86`     | 97    |
+| `I-16`     | 80    |     | `FW-190A` | 92    |     |            |       |
 
 **No notch** — nothing above max continuous worth gating, so the detent sits at the top of
 the track and stays out of the way. All at **100**:
 
-`A-4` · `A-10` · `AH-64` · `CH-47` · `Christen Eagle` · `F-100` · `FW-190D` · `Hawk` ·
-`Ka-50` · `L-39` · `MB-339` · `Mi-8` · `Mi-24` · `MiG-15` · `MiG-19` · `OH58` · `SA342` ·
-`Su-25` · `UH-1` · `UH-60` · `Yak-52`
+`A-10` · `AH-64` · `CH-47` · `Christen Eagle` · `F-100` · `Hawk` · `Ka-50` · `Mi-8` ·
+`Mi-24` · `MiG-19` · `OH58` · `SA342` · `Su-25` · `UH-1` · `UH-60` · `Yak-52`
 
 Anything not listed falls to **`NONE`**, which ships at **75** — a usable middle setting
 rather than no gate at all.
@@ -172,9 +173,11 @@ The name is matched as a **case-insensitive substring** of the DCS aircraft name
 `FA-18` covers `FA-18C_hornet`. On several matches the longest name wins. **`NONE` is the
 fallback** for anything unmatched — keep it in the list.
 
-A row turns **green** when it is the one DCS is flying right now: the module DCS last
-reported matches that row's name, and that row's ratio is what is on the throttle. The
-line above the table names the module, or says `none` when DCS is not running. The window
+A row turns **green** when it is the one on the throttle right now: the row DCS matched
+when it reported an aircraft, or the row you last hit **Activate** on, and in both cases
+only while that row's ratio is still what the throttle reports. **Restore Default** leaves
+nothing green, because no row from the table is applied any more. The line above the table
+names the module DCS last reported, or says `none` when DCS is not running. The window
 reads the throttle when it opens, after **Activate**, and when you hit **Refresh**, so if
 you leave it open while switching aircraft, hit **Refresh** to catch up.
 
@@ -562,6 +565,13 @@ new to add.
 The log file stays unversioned (`Logs\wctrl-auto-ab-detent-ratio.log`) so it is always in
 the same place; each run records its version in the first line.
 
+Each DCS launch starts the log fresh. The previous session's log is kept beside it as
+`wctrl-auto-ab-detent-ratio.log.bak` - the same `.bak` convention the installer uses for
+`config.json`, without the timestamp, since only one old log is kept. The one before that is
+discarded, so exactly two sessions are ever on disk. Running `helper.ps1` by hand
+(`-Status`, `-Apply`, `-Restore`, `-Devices`) appends to the current log rather than rolling
+it over.
+
 #### What an install replaces
 
 Installing is a **complete replace of the program files**, not a merge:
@@ -591,7 +601,7 @@ Scripts/                                   mirrors DCS Saved Games\Scripts
       WinctrlHid.ps1    Win32 HID layer + the reverse-engineered wire protocol
       config-manager-gui.ps1   the ratio editor window
       config.json       settings + a ratio table per throttle (source of truth)
-      state.json        what DCS last reported; written by the helper, read by the editor
+      state.json        what DCS last reported and which ratio row is on the throttle
       run-hidden.vbs    starts a script with no console window
 install.cmd                                the installer - double-click this
 VERSION                                    single source of truth for the version
@@ -613,7 +623,8 @@ docs/
 .\helper.ps1 -Restore     # back to restoreRatio
 ```
 
-Log: `Saved Games\DCS\Logs\wctrl-auto-ab-detent-ratio.log`
+Log: `Saved Games\DCS\Logs\wctrl-auto-ab-detent-ratio.log`  
+Previous session: `Saved Games\DCS\Logs\wctrl-auto-ab-detent-ratio.log.bak`
 
 ---
 
