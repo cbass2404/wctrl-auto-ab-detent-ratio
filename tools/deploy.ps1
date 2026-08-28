@@ -15,12 +15,15 @@
       - none found                    -> asks for the path
       - not interactive               -> pass -SavedGames explicitly
 
-        .\install.cmd                        # install / update; merges config.json
+        .\install.cmd                        # install / update; see $configPolicy
+                                             # below for what happens to config.json
         .\install.cmd -All                   # every DCS folder found, no prompt
         .\install.cmd -SavedGames <p>[,<p>]  # explicit target(s)
         .\install.cmd -WhatIf                # show what would change, touch nothing
         .\install.cmd -ForceConfig           # discard config.json, use the shipped
                                              # defaults instead (backed up first)
+        .\install.cmd -KeepConfig            # on a release that replaces config.json
+                                             # by default, merge yours forward instead
         .\install.cmd -NoShortcut            # skip the Start Menu shortcut
         .\install.cmd -Shortcut              # create it without asking
         .\install.cmd -Uninstall             # remove the deployed copy
@@ -31,6 +34,7 @@ param(
     [string[]]$SavedGames,
     [switch]$All,
     [switch]$ForceConfig,
+    [switch]$KeepConfig,
     [switch]$NoShortcut,
     [switch]$Shortcut,
     [switch]$Uninstall
@@ -58,6 +62,27 @@ $version = $version -replace '^[vV](?=\d)', ''
 # alongside rather than merging into the old one.
 $projectName = "$baseName-$version"
 $hookName    = "$baseName-hook-$version.lua"
+
+# How this release treats a config.json that is already installed.
+#
+#   'Merge'   - the long-term default. Write-MergedConfig splices every value
+#               the user has over the shipped file, so an upgrade only ever
+#               adds: new settings, new aircraft, current comments. Nothing
+#               they tuned is touched.
+#
+#   'Replace' - Write-ReplacedConfig installs the shipped file verbatim and
+#               keeps theirs as a .bak. For a release that fixes the shipped
+#               VALUES rather than the schema. A merge cannot deliver that:
+#               it treats every key the user already has as theirs to keep,
+#               which is exactly the wrong call when the number in their file
+#               is the bug being fixed.
+#
+# Set per release, and set back to 'Merge' in the one after. Both functions
+# stay - this line is the only thing that chooses between them, so a future
+# release that has to correct a shipped default can flip it and no more.
+# -KeepConfig overrides a 'Replace' release for one install; -ForceConfig
+# overrides a 'Merge' one.
+$configPolicy = 'Replace'
 
 # Anything from this project under any other name: earlier project names, and
 # any other version of this one. All of it gets removed after the new version is
@@ -772,6 +797,93 @@ function Write-MergedConfig {
     return $true
 }
 
+function Write-ReplacedConfig {
+    <#
+        Install the shipped config.json over the user's, keeping theirs as a
+        timestamped .bak beside it.
+
+        The counterpart to Write-MergedConfig, for a release whose fix IS a
+        shipped value. A merge is additive by design - it only adds keys and
+        ratio rows the user does not already have - so a corrected default for
+        an aircraft they already have a row for would never reach them. This
+        path is how that correction lands.
+
+        The backup is unconditional, unlike the merge path's, because a replace
+        always discards something: the user's file either goes under the shipped
+        one or, when it lives in a prior install's folder, is left behind
+        uncarried. Either way the only copy of what they had tuned is the .bak,
+        so it is written even when the caller did not ask for one.
+
+        Returns $true when $DestPath holds this version's config, matching
+        Write-MergedConfig's contract so the two are interchangeable.
+    #>
+    param([string]$ShippedPath, [string]$UserPath, [string]$DestPath, [string]$Source)
+
+    try { $shippedText = [IO.File]::ReadAllText($ShippedPath) } catch {
+        Write-Warning "  could not read $ShippedPath - leaving config.json alone"
+        return $false
+    }
+
+    # An upgrade has already copied the shipped file to $DestPath by the time
+    # the legacy and prior-install callers run, so the write below is a no-op
+    # for them - what matters there is the backup, and not carrying the old
+    # file forward. Only the in-place reinstall has the user's file sitting at
+    # $DestPath itself.
+    $current = ''
+    if (Test-Path -LiteralPath $DestPath) { $current = [IO.File]::ReadAllText($DestPath) }
+
+    $userExists = (Test-Path -LiteralPath $UserPath)
+    $userText   = if ($userExists) { [IO.File]::ReadAllText($UserPath) } else { '' }
+    if ($current -eq $shippedText -and (-not $userExists -or $userText -eq $shippedText)) {
+        Write-Host '  kept your config.json (already this version''s defaults)'
+        return $true
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($DestPath, "Replace config.json with this version's defaults (yours from $Source is backed up)")) {
+        return $true
+    }
+
+    if ($userExists) {
+        # Named for the destination, not the source, so a config carried from a
+        # prior install lands in the new install's lib\ folder - where someone
+        # looking for what they lost will actually look.
+        $bak = "$DestPath.bak-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
+        Copy-Item -LiteralPath $UserPath -Destination $bak -Force
+        Write-Host "  backed up your config.json -> $(Split-Path $bak -Leaf)"
+    }
+
+    if ($current -ne $shippedText) {
+        [IO.File]::WriteAllText($DestPath, $shippedText, (New-Object Text.UTF8Encoding($false)))
+    }
+
+    Write-Host "  replaced config.json with this version's defaults"
+    Write-Host "    - this release corrects settings that shipped wrong, so it does not"
+    Write-Host "      merge; your previous file is the .bak above"
+    Write-Host "    - reinstall with -KeepConfig to merge yours forward instead"
+    return $true
+}
+
+function Write-UserConfig {
+    <#
+        Hand a config.json off to whichever path this release uses, so the
+        three call sites below stay identical whichever way $configPolicy is
+        set and neither path can rot from disuse.
+
+        -ForceConfig and -KeepConfig are the per-install overrides, one for
+        each direction: -ForceConfig replaces on a Merge release, -KeepConfig
+        merges on a Replace one. -ForceConfig is handled by the caller, which
+        has to skip the merge before it copies rather than after.
+    #>
+    param([string]$ShippedPath, [string]$UserPath, [string]$DestPath, [string]$Source, [switch]$Backup)
+
+    if ($configPolicy -eq 'Replace' -and -not $KeepConfig) {
+        return (Write-ReplacedConfig -ShippedPath $ShippedPath -UserPath $UserPath `
+                                     -DestPath $DestPath -Source $Source)
+    }
+    return (Write-MergedConfig -ShippedPath $ShippedPath -UserPath $UserPath `
+                               -DestPath $DestPath -Source $Source -Backup:$Backup)
+}
+
 $shortcutName = 'WinWing Afterburner Ratios.lnk'
 
 function Get-StartMenuDir {
@@ -939,8 +1051,8 @@ function Install-ToTarget {
                 # aircraft and settings added since that file was written show
                 # up. Everything already in it is preserved, so this is a no-op
                 # unless this package genuinely ships something new.
-                if (Write-MergedConfig -ShippedPath $f.FullName -UserPath $destConfig `
-                                       -DestPath $destConfig -Source 'your existing install' -Backup) {
+                if (Write-UserConfig -ShippedPath $f.FullName -UserPath $destConfig `
+                                     -DestPath $destConfig -Source 'your existing install' -Backup) {
                     $script:carriedRatios = $true
                     continue
                 }
@@ -970,8 +1082,8 @@ function Install-ToTarget {
     # orphaned where nothing reads it. Merge it across, then remove it.
     $legacyConfig = Join-Path $destDir 'config.json'
     if (-not $configExists -and (Test-Path -LiteralPath $legacyConfig)) {
-        if (Write-MergedConfig -ShippedPath $destConfig -UserPath $legacyConfig `
-                               -DestPath $destConfig -Source 'the previous layout') {
+        if (Write-UserConfig -ShippedPath $destConfig -UserPath $legacyConfig `
+                             -DestPath $destConfig -Source 'the previous layout') {
             $script:carriedRatios = $true
         }
     }
@@ -996,8 +1108,8 @@ function Install-ToTarget {
             $priorCfg = Join-Path $prior ('lib' + $sep + 'config.json')
             if (-not (Test-Path -LiteralPath $priorCfg)) { $priorCfg = Join-Path $prior 'config.json' }
             if (-not (Test-Path -LiteralPath $priorCfg)) { continue }
-            if (Write-MergedConfig -ShippedPath $destConfig -UserPath $priorCfg `
-                                   -DestPath $destConfig -Source (Split-Path $prior -Leaf)) {
+            if (Write-UserConfig -ShippedPath $destConfig -UserPath $priorCfg `
+                                 -DestPath $destConfig -Source (Split-Path $prior -Leaf)) {
                 $script:carriedRatios = $true
             }
             break

@@ -51,18 +51,49 @@ $script:Version  = $(
 )
 
 # Log name stays unversioned so it is always in the same place; the version is
-# recorded in the first line of every run instead.
-$script:LogPath = Join-Path $env:USERPROFILE "Saved Games\DCS\Logs\$script:BaseName.log"
+# recorded in the first line of every run instead. Exactly two logs are kept:
+# the session now running, and the one before it.
+$script:LogDir      = Join-Path $env:USERPROFILE "Saved Games\DCS\Logs"
+$script:LogPath     = Join-Path $script:LogDir "$script:BaseName.log"
+$script:PrevLogPath = "$script:LogPath.bak"
 
 function Write-Log {
     param([string]$Message, [string]$Level = 'info')
     $line = '{0} [{1}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $Level, $Message
     try {
-        $dir = Split-Path -Parent $script:LogPath
-        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        if (-not (Test-Path $script:LogDir)) { New-Item -ItemType Directory -Path $script:LogDir -Force | Out-Null }
         Add-Content -Path $script:LogPath -Value $line -Encoding UTF8
     } catch { }
     if ($Foreground -or $Status -or $Devices -or $Apply -ge 0 -or $Restore) { Write-Host $line }
+}
+
+function Start-LogSession {
+    <#
+        Roll the log over for a new DCS session: the previous .bak goes, this
+        session's log becomes the .bak, and the next Write-Log starts a fresh one
+        (Add-Content creates it). Same .bak convention deploy.ps1 uses for
+        config.json, minus the timestamp - only one old log is ever kept.
+
+        A rename moves no bytes, and -Force overwrites the old .bak in the same
+        call, so the whole rotation is one filesystem operation. Nothing here is
+        worth failing a run over - a log that could not be moved is simply
+        appended to, exactly as before.
+
+        Only the listener calls this, and only once it owns the UDP port: a
+        second instance losing that race must not wipe the log of the one that
+        is actually running. -Status / -Apply / -Restore / -Devices append to
+        the current session's log rather than starting a new one.
+    #>
+    try {
+        if (Test-Path $script:LogPath) {
+            Move-Item -Path $script:LogPath -Destination $script:PrevLogPath -Force
+        }
+        elseif (Test-Path $script:PrevLogPath) {
+            # No log to promote, so whatever is sitting in the .bak is older than
+            # the session it claims to be and would only mislead.
+            Remove-Item -Path $script:PrevLogPath -Force
+        }
+    } catch { }
 }
 
 # ----------------------------------------------------------------- config ----
@@ -325,44 +356,45 @@ function Get-RestoreTarget {
 
 function Get-StatePath { Join-Path $scriptDir 'state.json' }
 
-function Write-DetectedAircraft {
+function Read-StateFile {
     <#
-        Record what DCS last reported, so the config manager can show which row
-        is live rather than guessing from the percentage on the throttle.
-
-        Its own file rather than a key in config.json. config.json is hand-edited
-        and rewritten by the GUI's Save, so a second writer there would mean two
-        processes splicing one file, where a Save landing on a stale read
-        silently drops a name. state.json is machine-owned, which also means it
-        can simply be serialised whole: there are no comments, key order or hand
-        alignment to preserve, so none of the splice machinery is needed.
-
-        Written on DETECTION, not on apply, and regardless of whether a HID write
-        actually happened - the label should report what DCS said even when the
-        throttle write failed verification.
-
-        Never throws. A state write is display state and must not be able to fail
-        a detection.
+        Whatever is on disk, or $null. Callers only ever use this to keep the
+        half of the file they are not writing, so an unreadable file just means
+        "keep nothing" and the write goes ahead anyway: a corrupt state.json
+        must not be able to stop the helper recording a fresh one.
     #>
-    param([string]$Name, $Ratio, [string]$Via)
+    $path = Get-StatePath
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try { return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json) } catch { return $null }
+}
 
-    $state = if ([string]::IsNullOrWhiteSpace($Name)) {
-        [ordered]@{ lastDetectedAircraft = $null }
-    } else {
-        [ordered]@{
-            lastDetectedAircraft = [ordered]@{
-                name  = $Name
-                ratio = $Ratio
-                via   = $Via
-                at    = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-            }
-        }
-    }
+function Write-StateFile {
+    <#
+        Serialise the whole file.
+
+        Its own file rather than a key in config.json. config.json is
+        hand-edited and rewritten by the GUI's Save, so a second writer there
+        would mean two processes splicing one file, where a Save landing on a
+        stale read silently drops a name. state.json is machine-owned, which
+        also means it can simply be serialised whole: there are no comments, key
+        order or hand alignment to preserve, so none of the splice machinery is
+        needed.
+
+        Temp file then Move-Item -Force, so a reader never sees half a file. The
+        config manager writes here too, for a ratio applied by hand, which makes
+        this a read-modify-write across two processes - the loser of a
+        same-instant collision loses its half. Both halves are display state
+        that the next detection or Refresh rewrites, so a lock would cost more
+        than the race does.
+
+        Never throws. A state write must not be able to fail a detection.
+    #>
+    param($State)
 
     $path = Get-StatePath
     $tmp  = "$path.tmp"
     try {
-        [IO.File]::WriteAllText($tmp, ($state | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText($tmp, ($State | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding($false)))
         Move-Item -LiteralPath $tmp -Destination $path -Force
     } catch {
         Write-Log "could not write state.json: $($_.Exception.Message)" 'warn'
@@ -370,9 +402,94 @@ function Write-DetectedAircraft {
     }
 }
 
+function New-StateAircraft {
+    <# Null for a blank name, which is how "nothing is detected" is stored. #>
+    param([string]$Name, $Ratio, [string]$Via)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $null }
+    return [ordered]@{
+        name  = $Name
+        ratio = $Ratio
+        via   = $Via
+        at    = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+}
+
+function New-StateProfile {
+    <#
+        Null for a blank entry, which is how "no row is on the throttle" is
+        stored - a restore to neutral, or a resolve that landed on noMatchRatio
+        and so belongs to no row at all.
+
+        NONE is a row like any other and is stored by name: it is what the
+        helper actually applied, and the editor should light it up.
+    #>
+    param([string]$Entry, $Ratio, [string]$Source)
+    if ([string]::IsNullOrWhiteSpace($Entry)) { return $null }
+    return [ordered]@{
+        name   = $Entry
+        ratio  = $Ratio
+        source = $Source
+        at     = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+}
+
+function Write-DetectedAircraft {
+    <#
+        Record what DCS reported AND which table row answered for it, so the
+        config manager can colour the row that is actually on the throttle
+        instead of re-deriving the match from a percentage.
+
+        Two keys, because they answer different questions and go stale
+        separately. lastDetectedAircraft is the DCS module name, which only a
+        detection changes. lastAppliedProfile is the row now written to the
+        device, which the config manager's Activate changes too: a ratio applied
+        by hand is every bit as live as a detected one, and before this the
+        editor had no way to know which row it came from.
+
+        'name' on the profile is the TABLE ENTRY name, not the aircraft. An
+        FA-18C_hornet detection resolves to the "FA-18" row, and "FA-18" is what
+        goes here.
+
+        Written on DETECTION, not on apply, and regardless of whether the HID
+        write actually happened: the label should report what DCS said even when
+        the throttle write failed verification.
+    #>
+    param([string]$Name, $Ratio, [string]$Via, [string]$Entry)
+
+    Write-StateFile ([ordered]@{
+        lastDetectedAircraft = New-StateAircraft -Name $Name -Ratio $Ratio -Via $Via
+        lastAppliedProfile   = New-StateProfile -Entry $Entry -Ratio $Ratio -Source 'auto'
+    })
+}
+
 function Clear-DetectedAircraft {
-    <# No module detected: nothing in the editor should look live. #>
-    Write-DetectedAircraft -Name ''
+    <#
+        No module detected: nothing in the editor should claim one.
+
+        The applied profile is deliberately kept. It describes what is
+        physically on the throttle, and the device holds its ratio in
+        non-volatile memory - so a helper killed from Task Manager, or a power
+        cut, loses the detection but not the ratio, and the row that put it
+        there is still the honest answer. Restore-Neutral, which does rewrite
+        the device, clears it explicitly.
+    #>
+    $s = Read-StateFile
+    $keep = if ($s) { $s.lastAppliedProfile } else { $null }
+    Write-StateFile ([ordered]@{
+        lastDetectedAircraft = $null
+        lastAppliedProfile   = $keep
+    })
+}
+
+function Clear-AppliedProfile {
+    <# The device is going back to neutral, so no row is live and nothing in the
+       editor should be green. The detected name is left alone. #>
+    $s = Read-StateFile
+    $keep = if ($s) { $s.lastDetectedAircraft } else { $null }
+    Write-StateFile ([ordered]@{
+        lastDetectedAircraft = $keep
+        lastAppliedProfile   = $null
+    })
 }
 
 # --------------------------------------------------------------- matching ----
@@ -383,6 +500,10 @@ function Resolve-Ratio {
         Longest match wins so "F-4E" beats "F-4" on an F-4E. NONE never matches
         by name - it is the fallback. With no NONE entry, fall back to the
         configured noMatchRatio.
+
+        'entry' is the row that answered, which is what state.json records for
+        the editor's highlight. It is $null only for the noMatchRatio case,
+        where the ratio applied belongs to no row in the table.
     #>
     param(
         [Parameter(Mandatory)][string]$Aircraft,
@@ -399,12 +520,12 @@ function Resolve-Ratio {
             if ($null -eq $best -or $e.name.Length -gt $best.name.Length) { $best = $e }
         }
     }
-    if ($best) { return @{ ratio = [int]$best.ratio; via = "matched '$($best.name)'" } }
+    if ($best) { return @{ ratio = [int]$best.ratio; via = "matched '$($best.name)'"; entry = [string]$best.name } }
 
     $none = $Table | Where-Object { $_.name -ieq 'NONE' } | Select-Object -First 1
-    if ($none) { return @{ ratio = [int]$none.ratio; via = 'no match -> NONE' } }
+    if ($none) { return @{ ratio = [int]$none.ratio; via = 'no match -> NONE'; entry = [string]$none.name } }
 
-    return @{ ratio = [int]$Config.noMatchRatio; via = "no match, no NONE entry -> default $($Config.noMatchRatio)%" }
+    return @{ ratio = [int]$Config.noMatchRatio; via = "no match, no NONE entry -> default $($Config.noMatchRatio)%"; entry = $null }
 }
 
 # ----------------------------------------------------------------- device ----
@@ -575,11 +696,15 @@ if ($Status) {
     return
 }
 
-# Both set a ratio with no aircraft behind it, so a name left in state.json
-# would point the editor at a row that is not why the throttle reads what it
-# reads.
-if ($Apply -ge 0) { Clear-DetectedAircraft; [void](Set-Ratio -Target $Apply -Config $cfg -Reason '(manual)'); return }
-if ($Restore)     { Clear-DetectedAircraft; [void](Set-Ratio -Target (Get-RestoreTarget $cfg) -Config $cfg -Reason '(manual restore)'); return }
+# Neither touches state.json, and neither can mislead the editor. -Apply takes a
+# raw percentage rather than a row, so there is no row to record; a stale
+# lastAppliedProfile stops being green the moment the percentage it names is no
+# longer the one on the throttle. -Restore leaves the device Inactivated, which
+# reports no percentage at all, so nothing is green either way. The config
+# manager's own Activate is the one hand-applied path that DOES know its row,
+# and it records it.
+if ($Apply -ge 0) { [void](Set-Ratio -Target $Apply -Config $cfg -Reason '(manual)'); return }
+if ($Restore)     { [void](Set-Ratio -Target (Get-RestoreTarget $cfg) -Config $cfg -Reason '(manual restore)'); return }
 
 # ---- listener ----
 
@@ -596,6 +721,11 @@ try {
 }
 $udp.Client.ReceiveTimeout = 1000
 
+# The port is ours, so this process is the session. The hook starts the helper
+# once per DCS launch and the helper exits with DCS, so this fires exactly once
+# per session - the log below is the first line of the fresh file.
+Start-LogSession
+
 $restoreTarget = Get-RestoreTarget $cfg
 Write-Log "v$script:Version listening on 127.0.0.1:$($cfg.port); restore target $(if ($restoreTarget -eq 'clear') { 'Inactivated' } else { "$restoreTarget%" })"
 
@@ -607,7 +737,9 @@ $script:currentAircraft = $null
 $script:missionLive     = $false
 $script:lastTraffic     = [DateTime]::UtcNow
 $script:lastDcsCheck    = [DateTime]::UtcNow
-$script:sawDcs          = $false
+$script:sawDcs          = $false   # DCS confirmed alive at least once
+$script:dcsUp           = $false   # answer of the last process check
+$script:quietLogged     = $false   # a hold has been logged for this silence
 $script:lastTableCheck  = [DateTime]::UtcNow
 
 function Sync-RatioTableIfChanged {
@@ -633,9 +765,39 @@ function Sync-RatioTableIfChanged {
         Write-Log "config changed; re-resolving '$($script:currentAircraft)' -> $($r.ratio)% ($($r.via))"
         # Re-resolving can move the answer to a different row, so the recorded
         # ratio has to follow or the editor would highlight nothing.
-        Write-DetectedAircraft -Name $script:currentAircraft -Ratio $r.ratio -Via $r.via
+        Write-DetectedAircraft -Name $script:currentAircraft -Ratio $r.ratio -Via $r.via -Entry $r.entry
         [void](Set-Ratio -Target $r.ratio -Config $cfg -Reason "for $($script:currentAircraft) (config updated)")
     }
+}
+
+function Stop-Mission {
+    <#
+        Back to the DCS menu, mission ended. The throttle keeps the ratio and
+        state.json keeps the name, because neither has stopped being true: the
+        player is still in DCS and is very likely going straight into another
+        mission or server in the same aircraft. Restoring here would write the
+        device twice for that round trip - once to neutral, once back to the
+        same ratio - and blank the editor's green row in between, all to end up
+        where it started. Device config lives in non-volatile memory, so a write
+        that changes nothing is still worth not making.
+
+        Leaving $currentAircraft set is what makes the round trip free: the 'mod'
+        handler skips a name that has not changed, so re-entering the same
+        aircraft does nothing at all. A different aircraft applies as usual.
+
+        missionLive no longer gates the watchdog - the process list decides
+        that now - so all it does is keep this function to one log line if DCS
+        reports the stop more than once. That is worth having; the menu is also
+        exactly where someone quits, and the watchdog has to keep watching
+        through it to notice.
+
+        Leaving DCS entirely is still a restore - that is Restore-Neutral, from
+        the watchdog's process check or the shutdown path.
+    #>
+    if (-not $script:missionLive) { return }
+    $script:missionLive = $false
+    $held = if ($script:currentAircraft) { "holding $($script:currentAircraft)" } else { 'nothing to hold' }
+    Write-Log "mission stop; $held until DCS exits or another aircraft is reported"
 }
 
 function Restore-Neutral {
@@ -644,6 +806,7 @@ function Restore-Neutral {
     $script:currentAircraft = $null
     $script:missionLive = $false
     Clear-DetectedAircraft
+    Clear-AppliedProfile
     [void](Set-Ratio -Target $restoreTarget -Config $cfg -Reason "($Reason)")
 }
 
@@ -655,7 +818,13 @@ try {
         catch [System.Net.Sockets.SocketException] { $bytes = $null }   # 1s idle tick
 
         if ($bytes -and $bytes.Length -gt 0) {
+            if ($script:quietLogged) {
+                $gap = ([DateTime]::UtcNow - $script:lastTraffic).TotalMilliseconds
+                Write-Log "traffic resumed after $([int]$gap) ms"
+                $script:quietLogged = $false
+            }
             $script:lastTraffic = [DateTime]::UtcNow
+            $script:sawDcs      = $true
             $text = [Text.Encoding]::UTF8.GetString($bytes)
 
             # Cheap prefilter: the export also streams addOutput at ~30Hz.
@@ -670,13 +839,12 @@ try {
                                 $script:currentAircraft = $name
                                 $r = Resolve-Ratio -Aircraft $name -Table $script:table -Config $cfg
                                 Write-Log "aircraft '$name' -> $($r.ratio)% ($($r.via))"
-                                Write-DetectedAircraft -Name $name -Ratio $r.ratio -Via $r.via
+                                Write-DetectedAircraft -Name $name -Ratio $r.ratio -Via $r.via -Entry $r.entry
                                 [void](Set-Ratio -Target $r.ratio -Config $cfg -Reason "for $name")
                             }
                         }
                         'mission' {
-                            if ($msg.msg -eq 'stop') { Restore-Neutral 'mission stop' }
-                            else { $script:missionLive = $true }
+                            if ($msg.msg -eq 'stop') { Stop-Mission } else { $script:missionLive = $true }
                         }
                     }
                 } catch {
@@ -691,21 +859,48 @@ try {
             try { Sync-RatioTableIfChanged } catch { Write-Log "table reload failed: $($_.Exception.Message)" 'warn' }
         }
 
-        # Watchdog: DCS crashed or the export died without a mission:stop.
-        if ($script:missionLive) {
-            $quiet = ([DateTime]::UtcNow - $script:lastTraffic).TotalMilliseconds
-            if ($quiet -gt [int]$cfg.heartbeatTimeoutMs) {
-                Restore-Neutral "no traffic for $([int]$quiet) ms"
-            }
-        }
+        # Watchdog. One silence timer, and one question asked only when it
+        # expires: is DCS still there?
+        #
+        # Silence is not evidence of anything on its own. The heartbeat comes
+        # out of the export loop, which DCS only runs while it is rendering, so
+        # alt-tabbing out, a paused single-player mission, a long load and the
+        # menu between missions all go quiet for far longer than the timeout
+        # while DCS is perfectly healthy. Restoring on silence alone dropped the
+        # ratio mid-sortie and then did not put it back, because 'mod' is only
+        # sent on entering or changing aircraft, never on resuming one.
+        #
+        # So silence past the timeout only decides when to look; the process
+        # list decides what it means. Still running is a pause of some kind:
+        # hold the ratio, however long it lasts. Gone is the end of the session:
+        # restore and exit, so other sims are unaffected and the port is free.
+        #
+        # This is also why the process list is not polled on a timer any more.
+        # While a mission streams there is nothing to ask about, and Get-Process
+        # enumerates every process on the machine; the 5s throttle now only
+        # paces the question during a silence that is already unusual.
+        $quiet = ([DateTime]::UtcNow - $script:lastTraffic).TotalMilliseconds
+        if ($quiet -gt [int]$cfg.heartbeatTimeoutMs -and
+            ([DateTime]::UtcNow - $script:lastDcsCheck).TotalSeconds -ge 5) {
 
-        # DCS gone entirely -> restore and exit, so other sims are unaffected.
-        if (([DateTime]::UtcNow - $script:lastDcsCheck).TotalSeconds -ge 5) {
             $script:lastDcsCheck = [DateTime]::UtcNow
-            $dcsUp = [bool](Get-Process -Name $cfg.dcsProcessName -ErrorAction SilentlyContinue)
-            if ($dcsUp) {
-                $script:sawDcs = $true
+            $script:dcsUp = [bool](Get-Process -Name $cfg.dcsProcessName -ErrorAction SilentlyContinue)
+
+            if ($script:dcsUp) {
+                # Once per silence, not once a second - and only when there
+                # is a ratio being held through it. Silence with no aircraft
+                # behind it is just the menu, or DCS not started yet, and has
+                # nothing at stake worth a line in the log.
+                if (-not $script:quietLogged -and $script:currentAircraft) {
+                    $script:quietLogged = $true
+                    Write-Log "no traffic for $([int]$quiet) ms, DCS still running; holding $($script:currentAircraft)"
+                }
             } elseif ($script:sawDcs) {
+                # sawDcs is set by traffic as well as by a sighting, so this
+                # still fires correctly if dcsProcessName has been set wrong -
+                # the datagrams themselves proved DCS was up. Before any of
+                # that, silence just means DCS has not been started yet, and
+                # the helper waits.
                 Restore-Neutral 'DCS exited'
                 Write-Log 'DCS no longer running - helper exiting'
                 break

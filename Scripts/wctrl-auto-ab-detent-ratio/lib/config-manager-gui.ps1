@@ -292,42 +292,75 @@ function Write-ConfigRatios {
 
 function Read-State {
     <#
-        What DCS last reported, written by helper.ps1. Absent, unreadable or
-        null all mean the same thing - nothing is detected - because the helper
-        may simply not be running, which is the normal case when someone opens
-        this to edit their table.
+        Two things the machine has recorded: the module DCS last reported, and
+        the table row that is on the throttle because of it. Both come back in
+        one object so a refresh parses the file once.
+
+        Absent, unreadable or null all mean the same thing - nothing recorded -
+        because the helper may simply not be running, which is the normal case
+        when someone opens this to edit their table.
 
         Note that 'at' does not come back as the string on disk: ConvertFrom-Json
         hydrates an ISO-8601 value into a [DateTime], with Kind = Utc because the
-        helper writes a trailing Z. That is the useful form, so a staleness check
+        writer emits a trailing Z. That is the useful form, so a staleness check
         can subtract it from [DateTime]::UtcNow directly. Nothing reads it today.
     #>
-    if (-not (Test-Path -LiteralPath $statePath)) { return $null }
-    try {
-        $s = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-        $d = $s.lastDetectedAircraft
-        if (-not $d -or [string]::IsNullOrWhiteSpace([string]$d.name)) { return $null }
-        return $d
-    } catch { return $null }
+    $empty = [pscustomobject]@{ aircraft = $null; profile = $null }
+    if (-not (Test-Path -LiteralPath $statePath)) { return $empty }
+
+    try { $s = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json }
+    catch { return $empty }
+
+    $a = $s.lastDetectedAircraft
+    if (-not $a -or [string]::IsNullOrWhiteSpace([string]$a.name)) { $a = $null }
+    $r = $s.lastAppliedProfile
+    if (-not $r -or [string]::IsNullOrWhiteSpace([string]$r.name)) { $r = $null }
+    return [pscustomobject]@{ aircraft = $a; profile = $r }
 }
 
-function Clear-DetectedAircraft {
+function Write-AppliedProfile {
     <#
-        Activate forces a ratio by hand, so the throttle stops reflecting a
-        detected module and nothing should look live. Same reasoning as
-        helper.ps1 -Apply.
+        Record the row just written to the throttle from here, so it is the one
+        that goes green. Applying a ratio by hand is exactly as live as the
+        helper applying one, and the row is known outright, so nothing has to be
+        guessed from the percentage.
 
-        Written whole rather than spliced: state.json is machine-owned, so there
-        is no formatting to preserve. Silent on failure - the helper rewrites it
-        on the next detection either way.
+        A blank name writes null, which is how "no row is on the throttle" is
+        stored: that is Restore Default, which leaves the device with no
+        afterburner mapping at all, and nothing should be highlighted after it.
+        NONE is a row like any other and is stored by name.
+
+        lastDetectedAircraft is read back and rewritten untouched. It belongs to
+        the helper and says what DCS reported, which applying a ratio here does
+        not change.
+
+        Never throws. This is display state, and failing to record it must not
+        turn a successful device write into an error on screen.
     #>
+    param([string]$Name, $Ratio)
+
+    $entry = if ([string]::IsNullOrWhiteSpace($Name)) { $null } else {
+        [ordered]@{
+            name   = $Name
+            ratio  = $Ratio
+            source = 'manual'
+            at     = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+        }
+    }
+
+    $keep = $null
+    if (Test-Path -LiteralPath $statePath) {
+        try { $keep = (Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json).lastDetectedAircraft } catch { }
+    }
+
+    $state = [ordered]@{ lastDetectedAircraft = $keep; lastAppliedProfile = $entry }
+    $tmp   = "$statePath.tmp"
     try {
-        $tmp = "$statePath.tmp"
-        [IO.File]::WriteAllText($tmp, '{' + [Environment]::NewLine +
-            '    "lastDetectedAircraft": null' + [Environment]::NewLine + '}',
-            (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText($tmp, ($state | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding($false)))
         Move-Item -LiteralPath $tmp -Destination $statePath -Force
-    } catch { }
+    } catch {
+        try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force } } catch { }
+    }
 }
 
 # ------------------------------------------------------------------ device --
@@ -698,72 +731,45 @@ $list.Add_Resize({ Update-ColumnFit })
 
 $form.Controls.Add($list)
 
-# What the throttle currently reports, and what DCS last told the helper it was
-# flying. Both are needed: the device stores a percentage and not which aircraft
-# produced it, so the percentage alone lit up every row sharing that number.
+# What the throttle currently reports, which table row put it there, and what
+# DCS last told the helper it was flying. All three are needed: the device
+# stores a percentage and not which row produced it, so the percentage alone lit
+# up every row sharing that number, and the aircraft name alone cannot describe
+# a ratio applied by hand from this window.
 $script:currentPercent = $null
+$script:applied        = $null
 $script:detected       = $null
 
 $script:activeBack = [System.Drawing.Color]::FromArgb(198, 239, 206)
 $script:activeFore = [System.Drawing.Color]::FromArgb(0, 97, 0)
 
-function Test-NameMatch {
-    <#
-        Case-insensitive containment in EITHER direction.
-
-        Detected names come from DCS and are specific, so a broad "FA-18" entry
-        has to light up for an "FA-18C_hornet" - the detected name contains the
-        entry. The other direction covers a table split into precise variants: a
-        detected "FA-18" should light up both "FA-18C" and "FA-18E", where the
-        entry contains the detected name. "FA-18E" and "FA-18C" never match each
-        other, because neither contains the other.
-    #>
-    param([string]$EntryUpper, [string]$DetectedUpper)
-    if (-not $EntryUpper -or -not $DetectedUpper) { return $false }
-    return $DetectedUpper.Contains($EntryUpper) -or $EntryUpper.Contains($DetectedUpper)
-}
-
 function Update-Highlight {
     <#
-        Green means "this row is the one DCS is driving right now", and needs
-        both halves to be true.
+        Green means "this row is what is on the throttle right now".
 
-        The NAME must match what the helper recorded. The RATIO must be what is
-        actually on the throttle. The ratio half is what picks a single row out
-        of several that match the name: with FA-18 at 82 and FA-18C at 79 and an
-        FA-18C_hornet detected, the helper applies 79 on longest-match, so only
-        FA-18C goes green. Two name-matching rows at the SAME ratio both light
-        up, which is honest - they are indistinguishable in outcome.
+        The row is named outright. helper.ps1 records which table entry it
+        resolved to, and Activate records the row you picked, so the automatic
+        and the by-hand case both point at a single row and there is nothing
+        left to infer. That replaced matching the detected module name against
+        every entry, which lit up every row that shared a percentage and could
+        not see a hand-applied ratio at all - Activate on a row for an aircraft
+        DCS had never reported lit nothing.
 
-        With nothing detected, nothing is green. The device line above still
-        reports the raw percentage, so what is physically on the throttle is
-        never hidden.
+        The percentage on the device still has to agree, and that is what keeps
+        a stale record from lying. Edit the applied row's ratio without
+        re-applying it, or let something else write the device, and the row goes
+        quiet until it is true again.
+
+        With no row recorded, nothing is green: no detection yet, a restore to
+        neutral, or an aircraft that fell through to noMatchRatio and so belongs
+        to no row. The device line above still reports the raw percentage, so
+        what is physically on the throttle is never hidden.
     #>
-    $detectedUp = if ($script:detected) { ([string]$script:detected.name).ToUpperInvariant() } else { '' }
-
-    # NONE never matches by name, exactly as in Resolve-Ratio, so whether it is
-    # live depends on nothing else having matched. That has to be known before
-    # any row can be coloured.
-    $anyNamed = $false
-    foreach ($item in $list.Items) {
-        $entryUp = ([string]$item.Text).ToUpperInvariant()
-        if ($entryUp -ne 'NONE' -and (Test-NameMatch -EntryUpper $entryUp -DetectedUpper $detectedUp)) {
-            $anyNamed = $true
-            break
-        }
-    }
+    $appliedName = if ($script:applied) { [string]$script:applied.name } else { '' }
 
     foreach ($item in $list.Items) {
-        $entryUp = ([string]$item.Text).ToUpperInvariant()
-        $nameOk = if ($entryUp -eq 'NONE') {
-            # The fallback is live only when a name was detected and nothing
-            # else matched it, which is precisely when the helper used it.
-            [bool]$detectedUp -and -not $anyNamed
-        } else {
-            Test-NameMatch -EntryUpper $entryUp -DetectedUpper $detectedUp
-        }
-
-        $isActive = $nameOk -and
+        $isActive = $appliedName -and
+                    ([string]$item.Text -ieq $appliedName) -and
                     ($null -ne $script:currentPercent) -and
                     ([string]$item.SubItems[1].Text -eq [string]$script:currentPercent)
 
@@ -807,7 +813,7 @@ function Update-GroupLabel {
 function Update-DetectedLabel {
     if (-not $script:detected) {
         $lblDetected.ForeColor = [System.Drawing.Color]::DimGray
-        $lblDetected.Text = 'Last detected: none (DCS not running)'
+        $lblDetected.Text = 'Last detected: none'
         return
     }
     $lblDetected.ForeColor = $script:activeFore
@@ -1025,7 +1031,7 @@ $btnDown = New-Button 'Move Down' 244 { Move-Selected -Delta 1 } 'Move the selec
 $btnActivate = New-Button 'Activate' 332 {
     $sel = Get-Selected
     if (-not $sel) { return }
-    $form.Cursor = 'WaitCursor'
+    Enter-Write
     try {
         $applied = Set-CurrentRatio -Group $script:group -Percent $sel.ratio
         if ($null -eq $applied) {
@@ -1033,14 +1039,21 @@ $btnActivate = New-Button 'Activate' 332 {
                 "Could not reach the throttle.`n`nIf this is the first time, calibrate the afterburner detent in SimAppPro - until then there is no ratio to set.",
                 'Throttle not found', 'OK', 'Warning')
         } else {
-            # The throttle no longer reflects a detected module, so nothing
-            # should look live until DCS says otherwise.
-            Clear-DetectedAircraft
+            # This row is now the one on the throttle, so it is the one that
+            # goes green - whether or not DCS is running, and whether or not it
+            # ever reported this aircraft.
+            #
+            # lastDetectedAircraft is left alone: applying a ratio by hand does
+            # not change what the player is flying, so the label above keeps its
+            # name. Tuning the ratio for the aircraft you are in and pressing
+            # Activate still lights the row on its new value, because the row
+            # was re-recorded here and the device now agrees with it.
+            Write-AppliedProfile -Name $sel.name -Ratio $sel.ratio
             Refresh-Device
         }
     } catch {
         [void][System.Windows.Forms.MessageBox]::Show($form, $_.Exception.Message, 'Could not set the ratio', 'OK', 'Error')
-    } finally { $form.Cursor = 'Default' }
+    } finally { Exit-Write }
 } 'Apply this ratio to the throttle now'
 
 [void](New-Button 'Restore Default' 370 {
@@ -1048,15 +1061,21 @@ $btnActivate = New-Button 'Activate' 332 {
         "Restore the throttle to how it ships?`r`n`r`nThe detent goes back to having no afterburner mapping. Your table is not touched, and the detent calibration is left alone.",
         'Restore default', 'YesNo', 'Question')
     if ($answer -ne 'Yes') { return }
-    $form.Cursor = 'WaitCursor'
+    Enter-Write
     try {
         $r = Clear-CurrentRatio -Group $script:group
         if ($null -eq $r) {
             [void][System.Windows.Forms.MessageBox]::Show($form, 'Could not reach the throttle.', 'Throttle not found', 'OK', 'Warning')
-        } else { Refresh-Device }
+        } else {
+            # Nothing from the table is on the throttle any more, so nothing
+            # should be green. The detected name stands: DCS is still flying
+            # whatever it was flying.
+            Write-AppliedProfile -Name ''
+            Refresh-Device
+        }
     } catch {
         [void][System.Windows.Forms.MessageBox]::Show($form, $_.Exception.Message, 'Could not restore the default', 'OK', 'Error')
-    } finally { $form.Cursor = 'Default' }
+    } finally { Exit-Write }
 } 'Put the throttle back to how it ships, with no ratio applied')
 
 [void](New-Button 'Refresh' 408 { Refresh-Device } 'Re-read the value currently on the throttle')
@@ -1078,12 +1097,66 @@ function Update-ButtonState {
 }
 $list.Add_SelectedIndexChanged({ Update-ButtonState })
 
+Add-Type -Namespace Wctrl -Name Input -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)]
+public struct MSG {
+    public IntPtr hwnd; public uint message; public IntPtr wParam;
+    public IntPtr lParam; public uint time; public int ptX; public int ptY;
+}
+[DllImport("user32.dll")]
+public static extern bool PeekMessage(out MSG m, IntPtr hwnd, uint min, uint max, uint remove);
+'@
+
+function Clear-QueuedInput {
+    <#
+        Throw away input that piled up while the UI thread was busy.
+
+        Disabling the buttons does not do this. Click handlers run on the UI
+        thread, so nothing in the queue is looked at until the handler returns -
+        by which point the finally has already re-enabled the buttons, and every
+        impatient click is delivered and replays the write. Five clicks on
+        Activate meant five full enumerate / read / write / read-back rounds of
+        an identical value.
+
+        So the buttons stay live and responsive, and the queue is emptied here
+        instead: PM_REMOVE with no dispatch, so the clicks are dropped rather
+        than acted on. Mouse and keys both, since a held Space or Enter on a
+        focused button auto-repeats the same way.
+
+        This is deliberately not filtered by target window - a click meant for
+        Close during the freeze goes too. It is one click to make again, and
+        the alternative is that the queue cannot be cleared at all: mouse
+        messages are hit-tested when they are pulled off the queue, not when
+        they land on it, so there is no window to filter on yet.
+    #>
+    $msg = New-Object 'Wctrl.Input+MSG'
+    $PM_REMOVE = 1
+    # WM_MOUSEFIRST..WM_MOUSELAST, then WM_KEYDOWN..WM_KEYUP.
+    while ([Wctrl.Input]::PeekMessage([ref]$msg, [IntPtr]::Zero, 0x0200, 0x020E, $PM_REMOVE)) { }
+    while ([Wctrl.Input]::PeekMessage([ref]$msg, [IntPtr]::Zero, 0x0100, 0x0101, $PM_REMOVE)) { }
+}
+
+function Enter-Write {
+    <# Activate and Restore Default both open the device, read 0x11C, write it
+       back and read it again, which can take a couple of seconds. The cursor is
+       the only thing that changes; nothing is disabled. #>
+    $form.Cursor = 'WaitCursor'
+}
+
+function Exit-Write {
+    <# Always from a finally, so a thrown write still clears the queue. #>
+    Clear-QueuedInput
+    $form.Cursor = 'Default'
+}
+
 function Refresh-Device {
     $lblDevice.Text = 'Reading the throttle...'
     $form.Refresh()
     # Cheap file read, and independent of whether the throttle answers: a device
-    # error should not also blank out what DCS last reported.
-    $script:detected = Read-State
+    # error should not also blank out what was last recorded.
+    $state = Read-State
+    $script:detected = $state.aircraft
+    $script:applied  = $state.profile
     Update-DetectedLabel
     try {
         $cur = Get-CurrentRatio -Group $script:group
