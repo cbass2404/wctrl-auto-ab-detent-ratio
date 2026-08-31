@@ -50,6 +50,34 @@ These are not omissions. Do not "correct" them to a value below 100 without flyi
 
 ---
 
+## Coverage
+
+The table covers **every official DCS module**, plus the A-4, Growler and Super Hornet
+community mods.
+
+That is **54 entries, not 54 aircraft.** A name is matched as a case-insensitive fragment of
+the DCS aircraft name and carries no variant, so a single `F-14` row serves the F-14A, the
+F-14B and the F-14B (Upgrade). Variants only earn their own row when they need a genuinely
+different number, and the longest match wins, so adding `F-14A` later overrides `F-14` for
+that one aircraft.
+
+### Untested rows
+
+Four values are derived by the method below but have **not been confirmed in the cockpit**,
+because the aircraft are not available to fly for testing:
+
+| Entry | Ratio |
+| --- | --- |
+| `F-15E` | 75 |
+| `AV8B` | 91 |
+| `MiG-19` | 100 |
+| `M-2000` | 89 |
+
+Treat them as sound but unconfirmed. A reported measurement from someone flying one beats the
+derivation, so these are the first rows to revisit.
+
+---
+
 ## Conditions
 
 Every value assumes:

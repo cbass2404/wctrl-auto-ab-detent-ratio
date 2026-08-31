@@ -112,9 +112,20 @@ with `-ExecutionPolicy Bypass` for that one process only, nothing machine-wide c
 
 ### 3. Check your ratios
 
-It ships with **54 aircraft** already set up, so you may not need to change anything. The
-ratio is where the notch sits as a percentage of throttle travel, and it always means the
-same thing: the last power you can hold indefinitely.
+It ships set up for **every official DCS module**, plus the A-4, Growler and Super Hornet
+community mods, so you may not need to change anything. The ratio is where the notch sits
+as a percentage of throttle travel, and it always means the same thing: the last power you
+can hold indefinitely.
+
+That coverage is **54 entries**, not 54 aircraft. Entries are matched as name fragments and
+carry no variant, so one `F-14` row covers the F-14A, the F-14B and the F-14B (Upgrade)
+without three rows to keep in step. Add a variant of your own only when you actually want it
+flown differently.
+
+Four ratios are **calculated but untested**, because they are the modules I cannot get in
+front of to fly: **F-15E**, **AV8B**, **MiG-19** and **M-2000**. They follow the same method
+as the rest, so treat them as sound but unconfirmed, and tell me if yours wants a different
+number.
 
 **Afterburner gate**, past the notch is burner.
 
@@ -175,8 +186,11 @@ deleted or renamed, because it is the fallback every unmatched aircraft lands on
 ratio is still yours to edit, that is the only part of it Edit will change.
 
 The name is matched as a **case-insensitive substring** of the DCS aircraft name, so
-`FA-18` covers `FA-18C_hornet`. On several matches the longest name wins. **`NONE` is the
-fallback** for anything unmatched, keep it in the list.
+`FA-18` covers `FA-18C_hornet`, and `F-14` covers `F-14A-135-GR`, `F-14B` and the B
+(Upgrade) alike. That is why the table needs no variants: one entry per airframe is enough
+until you want a variant flown differently. On several matches the longest name wins, so
+adding `F-14A` later beats the `F-14` row for the A only. **`NONE` is the fallback** for
+anything unmatched, keep it in the list.
 
 A row turns **green** when it is the one on the throttle right now: the row DCS matched
 when it reported an aircraft, or the row you last hit **Activate** on, and in both cases
