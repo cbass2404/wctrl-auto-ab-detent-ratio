@@ -149,11 +149,16 @@ the track and stays out of the way. All at **100**:
 Anything not listed falls to **`NONE`**, which ships at **75**, a usable middle setting
 rather than no gate at all.
 
-> **These values assume default DCS axis tuning.** Any curve, saturation or deadzone you
-> set on the throttle axis for an aircraft moves the relationship between lever position
-> and engine output, which shifts where the notch should be. They also assume the physical
-> detent is calibrated at the very end of its track. Treat every number as a starting
-> point and expect to nudge a few percent to taste.
+> **These values assume no curve and full saturation on the throttle axis**, that is, a
+> DCS axis left linear end to end. Any curve, saturation or deadzone you set for an
+> aircraft moves the relationship between lever position and engine output, which shifts
+> where the notch should be. **If you have been shaping the throttle axis per aircraft,
+> flatten it back out before you trust these numbers**: zero the curve, put saturation
+> back to 100, and clear the deadzone. The point of the notch is to give you a real max
+> continuous gate you can feel, without giving up a linear throttle to get it.
+>
+> They also assume the physical detent is calibrated at the very end of its track. Treat
+> every number as a starting point and expect to nudge a few percent to taste.
 
 To change them, open **WinWing Afterburner Ratios** from the Start Menu, the installer
 offers to add it, so you never need to go near the DCS folders. If you turned the shortcut
