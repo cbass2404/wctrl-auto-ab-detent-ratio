@@ -118,14 +118,14 @@ same thing: the last power you can hold indefinitely.
 
 **Afterburner gate**, past the notch is burner.
 
-| Aircraft    | Ratio |     | Aircraft | Ratio |     | Aircraft  | Ratio |
-| ----------- | ----- | --- | -------- | ----- | --- | --------- | ----- |
-| `Mirage-F1` | 50    |     | `J-11`   | 75    |     | `EA-18`   | 82    |
-| `F-14`      | 54    |     | `Su-27`  | 75    |     | `F-5`     | 82    |
-| `MiG-29`    | 60    |     | `Su-33`  | 75    |     | `FA-18`   | 82    |
-| `F-4`       | 70    |     | `Su-34`  | 75    |     | `M-2000`  | 89    |
-| `F-15E`     | 75    |     | `F-15C`  | 79    |     | `JF-17`   | 91    |
-| `F-16`      | 75    |     | `AJS37`  | 81    |     | `MiG-21`  | 91    |
+| Aircraft    | Ratio |     | Aircraft | Ratio |     | Aircraft | Ratio |
+| ----------- | ----- | --- | -------- | ----- | --- | -------- | ----- |
+| `Mirage-F1` | 50    |     | `J-11`   | 75    |     | `EA-18`  | 82    |
+| `F-14`      | 54    |     | `Su-27`  | 75    |     | `F-5`    | 82    |
+| `MiG-29`    | 60    |     | `Su-33`  | 75    |     | `FA-18`  | 82    |
+| `F-4`       | 70    |     | `Su-34`  | 75    |     | `M-2000` | 89    |
+| `F-15E`     | 75    |     | `F-15C`  | 79    |     | `JF-17`  | 91    |
+| `F-16`      | 75    |     | `AJS37`  | 81    |     | `MiG-21` | 91    |
 
 **Emergency power gate**, past the notch is on the clock: WEP, water injection, MW-50,
 boost cut-out, or a non-burner jet's short-time rating.
@@ -481,7 +481,7 @@ These are deliberately separate:
 
 | Setting        | When                                                                       | Default                 |
 | -------------- | -------------------------------------------------------------------------- | ----------------------- |
-| `restoreRatio` | leaving DCS, mission stop, DCS exit, watchdog                             | `"clear"` (Inactivated) |
+| `restoreRatio` | leaving DCS, mission stop, DCS exit, watchdog                              | `"clear"` (Inactivated) |
 | `noMatchRatio` | inside DCS, aircraft matched nothing **and** the table has no `NONE` entry | `75`                    |
 
 The first neutralises the throttle for other games; the second keeps it usable in an
@@ -667,10 +667,10 @@ WWTHID masks this off before logging.
 
 #### Config offsets
 
-| Offset                    | Meaning                                                                                     |
-| ------------------------- | ------------------------------------------------------------------------------------------- |
-| `0x09C`, `0x0A0`, `0x0A4` | 12-byte device serial, three 4-byte chunks                                                  |
-| `0x114`, `0x118`          | afterburner calibration points; all-`FF` = not calibrated                                   |
+| Offset                    | Meaning                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------ |
+| `0x09C`, `0x0A0`, `0x0A4` | 12-byte device serial, three 4-byte chunks                                                 |
+| `0x114`, `0x118`          | afterburner calibration points; all-`FF` = not calibrated                                  |
 | `0x11C`                   | afterburner ratio, **byte 0 = `100 - percent`**, bytes 1–3 preserved, `0xFF` = Inactivated |
 
 #### Part discovery
@@ -734,3 +734,4 @@ SimAppPro alt-tab shuffle and got you back to flying, you can put something in t
 Entirely optional, every part of this stays free either way.
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-C25E00?style=for-the-badge&logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/cbass2404)
+

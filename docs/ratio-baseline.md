@@ -55,11 +55,12 @@ These are not omissions. Do not "correct" them to a value below 100 without flyi
 Every value assumes:
 
 - **The physical detent calibrated at the very end of its track.** This is step 1 of setup.
-  A detent parked somewhere else still works, but every number shifts.
-- **Default DCS axis tuning for the aircraft.** Any curve, saturation or deadzone set on the
-  throttle axis moves the relationship between lever position and engine output, and
-  therefore moves where the notch should be. This is per-aircraft in DCS, so one tuned
-  aircraft invalidates only its own row.
+  A detent parked somewhere else still works, but every number possibly shifts. This is not tested.
+- **No curve and full saturation on the throttle axis**, that is, a DCS axis left linear
+  end to end. Any curve, saturation or deadzone set on the throttle axis moves the
+  relationship between lever position and engine output, and therefore moves where the
+  notch should be. This is per-aircraft in DCS, so one tuned aircraft invalidates only its
+  own row.
 
 Every value is a **starting point**. Users are told to expect to nudge a few percent.
 
