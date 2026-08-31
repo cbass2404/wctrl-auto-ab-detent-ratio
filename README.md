@@ -15,7 +15,7 @@ to neutral so other sims are unaffected.
 No more alt-tabbing to SimAppPro every time you change module.
 
 - SimAppPro needed once, to calibrate the detent. Never again after that.
-- Nothing to install but this — no Node, Python or .NET. Windows PowerShell only.
+- Nothing to install but this, no Node, Python or .NET. Windows PowerShell only.
 - Runs unelevated. No DCS, SimAppPro or WinWing file is modified.
 
 > **Beta.** Working well day to day, but the USB protocol was reverse-engineered, so
@@ -27,31 +27,31 @@ No more alt-tabbing to SimAppPro every time you change module.
 
 **Getting it running**
 
-- [Setup](#setup) — start here
+- [Setup](#setup), start here
   - [1. Calibrate the afterburner detent](#1-calibrate-the-afterburner-detent)
   - [2. Install](#2-install)
   - [3. Check your ratios](#3-check-your-ratios)
-  - [4. Per-aircraft DCS settings](#4-per-aircraft-dcs-settings) — the F-14 needs one
+  - [4. Per-aircraft DCS settings](#4-per-aircraft-dcs-settings), the F-14 needs one
   - [5. Check it works](#5-check-it-works)
 - [Updating and uninstalling](#updating-and-uninstalling)
-- [Troubleshooting](#troubleshooting) — something is not working
+- [Troubleshooting](#troubleshooting), something is not working
 
-**Background** — none of this is needed to use the tool
+**Background**, none of this is needed to use the tool
 
 - [How it works](#how-it-works)
   - [Why this works without SimAppPro](#why-this-works-without-simapppro)
   - [How it triggers](#how-it-triggers)
   - [Which device it touches](#which-device-it-touches)
-  - [Matching rules](#matching-rules) — how an aircraft name picks a ratio
+  - [Matching rules](#matching-rules), how an aircraft name picks a ratio
     - [Keeping the fallback current](#keeping-the-fallback-current)
-  - [Restoring to neutral](#restoring-to-neutral) — what happens when you quit DCS
+  - [Restoring to neutral](#restoring-to-neutral), what happens when you quit DCS
     - [restoreRatio vs noMatchRatio](#restoreratio-vs-nomatchratio)
   - [Install internals](#install-internals)
     - [Finding your DCS folder](#finding-your-dcs-folder)
     - [Versions](#versions)
     - [What an install replaces](#what-an-install-replaces)
     - [Repository layout](#repository-layout)
-  - [Manual use](#manual-use) — the command line options
+  - [Manual use](#manual-use), the command line options
   - [Wire protocol (reverse-engineered)](#wire-protocol-reverse-engineered)
     - [Config offsets](#config-offsets)
     - [Part discovery](#part-discovery)
@@ -61,13 +61,13 @@ No more alt-tabbing to SimAppPro every time you change module.
 
 **Supporting it**
 
-- [Support the Project](#-support-the-project) — it is free, but coffee helps
+- [Support the Project](#-support-the-project), it is free, but coffee helps
 
 ---
 
 ## Setup
 
-Five steps, about ten minutes. **Only step 1 needs SimAppPro** — after that you can close
+Five steps, about ten minutes. **Only step 1 needs SimAppPro**, after that you can close
 it and leave it closed.
 
 ### 1. Calibrate the afterburner detent
@@ -75,11 +75,11 @@ it and leave it closed.
 **In SimAppPro**, open your throttle and run the afterburner calibration.
 
 When it asks you to set the detent, **push the physical detent all the way to the end of
-its track.** That is what the recommended ratios below assume — if your detent sits
+its track.** That is what the recommended ratios below assume, if your detent sits
 somewhere else, the numbers still work but will need more tweaking to feel right.
 
-**This is the only thing SimAppPro is needed for.** Everything after this — the ratio
-table, applying ratios, tweaking them — happens in this tool. You can close SimAppPro and
+**This is the only thing SimAppPro is needed for.** Everything after this, the ratio
+table, applying ratios, tweaking them, happens in this tool. You can close SimAppPro and
 leave it closed.
 
 The step is required: until the detent is calibrated there is no reference point to scale
@@ -91,14 +91,14 @@ identify the right throttle in the first place).
 **Download the [latest release](../../releases), extract it, and double-click
 `install.cmd`.** That is the whole install.
 
-It finds your DCS folder — or asks, if you have more than one — and copies itself in.
+It finds your DCS folder, or asks, if you have more than one, and copies itself in.
 
 <details>
 <summary>Why <code>install.cmd</code> and not the PowerShell script?</summary>
 
 Windows will not run a `.ps1` on double-click; the extension has no `Open` verb, so it
 opens in an editor. That is a deliberate security control, and you should **not**
-re-associate `.ps1` to work around it — that makes every PowerShell script on the machine
+re-associate `.ps1` to work around it, that makes every PowerShell script on the machine
 runnable with one click.
 
 There is a second obstacle: the default `RemoteSigned` execution policy refuses an
@@ -106,7 +106,7 @@ unsigned script carrying the Mark of the Web, which everything extracted from a
 downloaded zip has.
 
 `install.cmd` handles both. Explorer executes `.cmd` directly, and it launches PowerShell
-with `-ExecutionPolicy Bypass` for that one process only — nothing machine-wide changes.
+with `-ExecutionPolicy Bypass` for that one process only, nothing machine-wide changes.
 
 </details>
 
@@ -116,7 +116,7 @@ It ships with **54 aircraft** already set up, so you may not need to change anyt
 ratio is where the notch sits as a percentage of throttle travel, and it always means the
 same thing: the last power you can hold indefinitely.
 
-**Afterburner gate** — past the notch is burner.
+**Afterburner gate**, past the notch is burner.
 
 | Aircraft    | Ratio |     | Aircraft | Ratio |     | Aircraft  | Ratio |
 | ----------- | ----- | --- | -------- | ----- | --- | --------- | ----- |
@@ -127,7 +127,7 @@ same thing: the last power you can hold indefinitely.
 | `F-15E`     | 75    |     | `F-15C`  | 79    |     | `JF-17`   | 91    |
 | `F-16`      | 75    |     | `AJS37`  | 81    |     | `MiG-21`  | 91    |
 
-**Emergency power gate** — past the notch is on the clock: WEP, water injection, MW-50,
+**Emergency power gate**, past the notch is on the clock: WEP, water injection, MW-50,
 boost cut-out, or a non-burner jet's short-time rating.
 
 | Aircraft   | Ratio |     | Aircraft  | Ratio |     | Aircraft   | Ratio |
@@ -140,13 +140,13 @@ boost cut-out, or a non-burner jet's short-time rating.
 | `MiG-15`   | 75    |     | `Bf-109`  | 92    |     | `F-86`     | 97    |
 | `I-16`     | 80    |     | `FW-190A` | 92    |     |            |       |
 
-**No notch** — nothing above max continuous worth gating, so the detent sits at the top of
+**No notch**, nothing above max continuous worth gating, so the detent sits at the top of
 the track and stays out of the way. All at **100**:
 
 `A-10` · `AH-64` · `CH-47` · `Christen Eagle` · `F-100` · `Hawk` · `Ka-50` · `Mi-8` ·
 `Mi-24` · `MiG-19` · `OH58` · `SA342` · `Su-25` · `UH-1` · `UH-60` · `Yak-52`
 
-Anything not listed falls to **`NONE`**, which ships at **75** — a usable middle setting
+Anything not listed falls to **`NONE`**, which ships at **75**, a usable middle setting
 rather than no gate at all.
 
 > **These values assume default DCS axis tuning.** Any curve, saturation or deadzone you
@@ -155,7 +155,7 @@ rather than no gate at all.
 > detent is calibrated at the very end of its track. Treat every number as a starting
 > point and expect to nudge a few percent to taste.
 
-To change them, open **WinWing Afterburner Ratios** from the Start Menu — the installer
+To change them, open **WinWing Afterburner Ratios** from the Start Menu, the installer
 offers to add it, so you never need to go near the DCS folders. If you turned the shortcut
 down, run `launch-config-manager.cmd` from the installed folder instead.
 
@@ -164,14 +164,14 @@ throttle so you can feel it without launching DCS. Edits apply to a running DCS 
 couple of seconds, so you can tune from the cockpit.
 
 **Move Up** and **Move Down** reorder the selected row, and **A-Z** sorts the whole table
-by name. Order is yours to arrange — the table is read top to bottom and saved in the
+by name. Order is yours to arrange, the table is read top to bottom and saved in the
 order you see. **`NONE`** is the exception: it is pinned to the top and cannot be moved,
 deleted or renamed, because it is the fallback every unmatched aircraft lands on. Its
-ratio is still yours to edit — that is the only part of it Edit will change.
+ratio is still yours to edit, that is the only part of it Edit will change.
 
 The name is matched as a **case-insensitive substring** of the DCS aircraft name, so
 `FA-18` covers `FA-18C_hornet`. On several matches the longest name wins. **`NONE` is the
-fallback** for anything unmatched — keep it in the list.
+fallback** for anything unmatched, keep it in the list.
 
 A row turns **green** when it is the one on the throttle right now: the row DCS matched
 when it reported an aircraft, or the row you last hit **Activate** on, and in both cases
@@ -185,15 +185,15 @@ you leave it open while switching aircraft, hit **Refresh** to catch up.
 > `lib` folder with the code that owns it, and hand edits are an easy way to end up with
 > a file the tool cannot read.
 >
-> A ratio that is not a whole number from 0 to 100 — negative, over 100, fractional,
-> missing or not a number at all — is **ignored rather than guessed at**, because the
+> A ratio that is not a whole number from 0 to 100, negative, over 100, fractional,
+> missing or not a number at all, is **ignored rather than guessed at**, because the
 > throttle will not accept it. The editor leaves that row out of the table and says which
 > ones it dropped; the helper skips it and logs it, keeping the rest of your table. Saving
 > from the editor removes the ignored rows from `config.json`.
 
 ### 4. Per-aircraft DCS settings
 
-Most aircraft need nothing here. The **F-14 is the exception** — Heatblur implements its
+Most aircraft need nothing here. The **F-14 is the exception**, Heatblur implements its
 own detent handling, so DCS needs to agree with your throttle.
 
 In DCS: **Options → Controls → F-14B → Special** tab:
@@ -223,7 +223,7 @@ You should see something like:
 ```
 
 Changing aircraft mid-session works too, and so does editing a ratio in the editor while
-DCS is running — it is picked up within a couple of seconds and re-applied to the aircraft
+DCS is running, it is picked up within a couple of seconds and re-applied to the aircraft
 you are already sitting in.
 
 ---
@@ -259,7 +259,7 @@ by running the installer again and saying no.
 
 **Nothing in the log, or no log at all.**
 Check `Saved Games\DCS\Logs\dcs.log` for `WINCTRL-AB` lines. If they are missing, the hook
-did not load — confirm `Scripts\Hooks\` contains a `wctrl-auto-ab-detent-ratio-hook-*.lua`.
+did not load, confirm `Scripts\Hooks\` contains a `wctrl-auto-ab-detent-ratio-hook-*.lua`.
 
 **"no afterburner-capable throttle part found".**
 The detent is not calibrated. Go back to step 1.
@@ -273,7 +273,7 @@ throttle entry is currently in force:
 ```
 
 Then put a distinctive part of your throttle's name into that entry's `match` list in
-`lib\config.json`. Match the **model**, not the brand — the vendor has been WinWing, WinUSA
+`lib\config.json`. Match the **model**, not the brand, the vendor has been WinWing, WinUSA
 and WinCtrl in about 18 months, and the brand is baked into the product string.
 
 **An aircraft gets the wrong ratio.**
@@ -281,7 +281,7 @@ The longest matching entry wins, and a tie in length goes to whichever row sits 
 Add a more specific entry in the ratio editor, or move the entry you want above the one it
 ties with.
 
-**Reporting a bug.** Include the version — it is in the folder name, the hook filename,
+**Reporting a bug.** Include the version, it is in the folder name, the hook filename,
 and the first line of the log.
 
 ---
@@ -323,7 +323,7 @@ w_net.addr = {{ ip="127.0.0.1", port=16535 },   -- SimAppPro2
 
 Only `16536` is bound (by SimAppPro). Binding **16537** yields
 `{"func":"mod","msg":"FA-18C_hornet"}` on aircraft change, a heartbeat every 3 s, and
-`{"func":"mission","msg":"stop"}` at mission end — with zero edits to any DCS or
+`{"func":"mission","msg":"stop"}` at mission end, with zero edits to any DCS or
 WinWing file.
 
 The DCS hook additionally sends the same `mod` message itself. That is deliberate:
@@ -354,7 +354,7 @@ table with the first.
 At startup the helper enumerates every WinWing HID device (VID `0x4098`), then narrows by
 two independent gates from the entry in force:
 
-1. **`match`** — case-insensitive substrings; a device qualifies if its product name
+1. **`match`**, case-insensitive substrings; a device qualifies if its product name
    contains **any** of them. Default `[ "Orion Throttle Base II" ]`. `throttlePid`
    restricts the search to one USB product id, or `0` for any.
 2. **Programmed afterburner calibration** at `0x114`/`0x118`, which picks the base out
@@ -368,13 +368,13 @@ at a time; several at once is a separate piece of work.
 The part id (`0xBE60` here) is discovered by broadcast, never assumed, so swapping
 handles or throttles re-discovers correctly.
 
-Match the **model, not the brand.** The vendor rebranded twice — **WinWing → WinUSA →
-WinCtrl** — in roughly 18 months, so the same model reports as `WINWING ...`,
+Match the **model, not the brand.** The vendor rebranded twice, **WinWing → WinUSA →
+WinCtrl**, in roughly 18 months, so the same model reports as `WINWING ...`,
 `WINUSA ...` or `WINCTRL ...` depending on how old its firmware is. No brand word
 belongs in the filter.
 
 Device selection keys on the **USB vendor id `0x4098`**, which is assigned to the
-company rather than the brand and survived all three names — SimAppPro's own
+company rather than the brand and survived all three names, SimAppPro's own
 `supportDevice.json` lists `"vid": 16536` for both its `WINWING` and `WINCTRL` entries
 of the same hardware.
 
@@ -401,17 +401,17 @@ logs what it _did_ find and touches no device.
 
 1. The **aircraft name must contain the table entry's name**, case-insensitively
    (`FA-18C_hornet` contains `FA-18`). Both sides go through `ToUpperInvariant()`, so
-   entry names you typed in SimAppPro match regardless of case — `f-4e` matches
+   entry names you typed in SimAppPro match regardless of case, `f-4e` matches
    `F-4E-45MC` exactly as `F-4E` does.
 2. On multiple matches the **longest entry name wins**, so `F-4E` beats a hypothetical `F-4`.
-   On a **tie in length, the row nearer the top of the table wins** — so if you keep both
+   On a **tie in length, the row nearer the top of the table wins**, so if you keep both
    `FA-18C` and `hornet`, whichever you put higher is the one that decides an
    `FA-18C_hornet`. Use **Move Up** in the ratio editor to settle it. Bear in mind that
    **A-Z** re-sorts the table and can therefore flip a tie you had arranged by hand.
-3. `NONE` never matches by name — it is the fallback when nothing else hits. It ships at
+3. `NONE` never matches by name, it is the fallback when nothing else hits. It ships at
    **`75`**, a usable middle setting, rather than at 100 where there would be no gate at
    all.
-4. If there is no `NONE` entry, fall back to `noMatchRatio` (**`75`**) — deliberately the
+4. If there is no `NONE` entry, fall back to `noMatchRatio` (**`75`**), deliberately the
    same number, so both answers to "I do not know what this aircraft is" agree.
 
 Verified against real DCS module names:
@@ -428,7 +428,7 @@ Verified against real DCS module names:
 | `F-4E-45MC` with entries `f-4` and `F-4E` | 70 % (longest match wins)         |
 
 The ratio table lives in this tool's own `config.json` and is the single source of truth.
-SimAppPro is never read at runtime — it is an Electron app that rewrites its whole config
+SimAppPro is never read at runtime, it is an Electron app that rewrites its whole config
 from memory, so treating it as a live source made this tool hostage to another program's
 lifecycle. Edits are made with `launch-config-manager.cmd`, and a running helper picks them up
 within two seconds by watching the file's timestamp.
@@ -440,7 +440,7 @@ thing that writes it. Saving rewrites just **one throttle's** `ratios` array by 
 its span and splicing, so the `_comment_` keys documenting every setting, the key order,
 any other throttle, and your other settings survive byte-for-byte. The file is written
 BOM-free through a temp file and an atomic move, and is parsed back before being
-committed — a save that would produce unreadable JSON is refused rather than written.
+committed, a save that would produce unreadable JSON is refused rather than written.
 Only one editor runs at a time. Launching it again while a window is already open
 raises that window instead of starting a second one, so two copies can never
 overwrite each other's edits.
@@ -454,7 +454,7 @@ cockpit.
 `restoreRatio` (default **`"clear"`**) is applied on mission stop, on DCS exit, and if
 traffic stops for `heartbeatTimeoutMs` (a DCS crash), so other sims are unaffected.
 
-`"clear"` writes `FF FF FF FF` to `0x11C` — the device's **"Inactivated"** state, meaning
+`"clear"` writes `FF FF FF FF` to `0x11C`, the device's **"Inactivated"** state, meaning
 no afterburner mapping at all. That is the throttle as it ships, which is what you want
 outside DCS. It is what SimAppPro's _Clear configuration_ button does.
 
@@ -476,7 +476,7 @@ These are deliberately separate:
 
 | Setting        | When                                                                       | Default                 |
 | -------------- | -------------------------------------------------------------------------- | ----------------------- |
-| `restoreRatio` | leaving DCS — mission stop, DCS exit, watchdog                             | `"clear"` (Inactivated) |
+| `restoreRatio` | leaving DCS, mission stop, DCS exit, watchdog                             | `"clear"` (Inactivated) |
 | `noMatchRatio` | inside DCS, aircraft matched nothing **and** the table has no `NONE` entry | `75`                    |
 
 The first neutralises the throttle for other games; the second keeps it usable in an
@@ -487,17 +487,17 @@ or leave a DCS ratio applied in other sims.
 
 #### Finding your DCS folder
 
-- **One DCS folder** — used automatically.
-- **Several** (multiple variants, or several users on the PC) — it lists them and asks
+- **One DCS folder**, used automatically.
+- **Several** (multiple variants, or several users on the PC), it lists them and asks
   which, or `A` for all.
-- **None** — it asks for the path and validates it before copying anything.
-- **Non-interactive** (piped, CI) — it will not hang on a prompt; pass `-SavedGames`.
+- **None**, it asks for the path and validates it before copying anything.
+- **Non-interactive** (piped, CI), it will not hang on a prompt; pass `-SavedGames`.
 
 The location comes from the Windows _known folder_ API rather than assuming
 `%USERPROFILE%\Saved Games`, so a Saved Games folder relocated to another drive still
 resolves. Other user profiles are scanned too; anything unreadable is skipped.
 
-Folder _names_ are not hardcoded — DCS's `dcs_variant.txt` can rename the folder (that is
+Folder _names_ are not hardcoded, DCS's `dcs_variant.txt` can rename the folder (that is
 where `DCS.openbeta` came from). A candidate has to contain one of `Config`, `Logs`,
 `Mods` or `Scripts`, because modules store their own data in similarly named folders:
 one real machine had `DCS`, `DCS_F14`, `DCS_F4E`, `DCS_AJS37`, `DCS_OH58D` and
@@ -518,7 +518,7 @@ So a bug report identifies its build at a glance, and `helper.ps1 -Status` repor
 The repo keeps the plain unversioned names; the suffix is applied on the way out.
 
 Each version installs into its **own folder**, and installing removes every other version
-and its hook — two hooks loaded at once would fire every event twice. Only one thing is
+and its hook, two hooks loaded at once would fire every event twice. Only one thing is
 carried across an upgrade:
 
 ```
@@ -533,12 +533,12 @@ global `ratios` table sat beside `deviceNameIncludes` and `throttlePid` at the t
 now all three live inside a `throttles` entry, so each throttle carries its own table. The
 installer detects the old shape, folds it into a single entry with your matcher, your
 product id and your rows in your order, drops the three retired keys and stamps
-`configVersion: 2`. The result behaves identically — nobody has to do anything — and the
+`configVersion: 2`. The result behaves identically, nobody has to do anything, and the
 pre-migration file is kept as `config.json.bak-<timestamp>`.
 
 **Every setting migrates, and an upgrade only ever adds.** The new version's shipped
-`config.json` is used as the skeleton — it brings the current comments, the current default
-ratio table, and any setting introduced since your version — and then every value you
+`config.json` is used as the skeleton, it brings the current comments, the current default
+ratio table, and any setting introduced since your version, and then every value you
 already had is written back over it. So:
 
 - a ratio you tuned keeps your number;
@@ -581,7 +581,7 @@ Installing is a **complete replace of the program files**, not a merge:
   **removed**, so an update cannot leave a stale module behind;
 - an install under an older _project name_ is removed too, since two hooks loading at
   once would double every event;
-- installing into a DCS folder with no `Scripts` directory works — it is created.
+- installing into a DCS folder with no `Scripts` directory works, it is created.
 
 The single exception is **`config.json`, which is yours and is merged rather than
 replaced.** It holds your settings and your mirrored ratio table, and anyone who has since
@@ -666,14 +666,14 @@ WWTHID masks this off before logging.
 | ------------------------- | ------------------------------------------------------------------------------------------- |
 | `0x09C`, `0x0A0`, `0x0A4` | 12-byte device serial, three 4-byte chunks                                                  |
 | `0x114`, `0x118`          | afterburner calibration points; all-`FF` = not calibrated                                   |
-| `0x11C`                   | afterburner ratio — **byte 0 = `100 - percent`**, bytes 1–3 preserved, `0xFF` = Inactivated |
+| `0x11C`                   | afterburner ratio, **byte 0 = `100 - percent`**, bytes 1–3 preserved, `0xFF` = Inactivated |
 
 #### Part discovery
 
 Send any command with `id = 01 00 00 00` and every sub-part answers with its own id.
 On an Orion Throttle Base II + F15EX handles that is `0xBF01`, `0xBF02` (handles) and
 `0xBE60` (base). The base is identified as the afterburner-capable part because its
-`0x114`/`0x118` calibration words are programmed — so no part id is hardcoded.
+`0x114`/`0x118` calibration words are programmed, so no part id is hardcoded.
 
 #### Serial encoding
 
@@ -685,7 +685,7 @@ flash bytes SimAppPro displays:
 | Flash `0x09C`–`0x0A7` / SimAppPro | `1A2B3C4D5E6F70819293A4B5` |
 | HID descriptor string             | `A1B2C3D4E5F6071829394A5B` |
 
-_(illustrative values — check your own with `helper.ps1 -Status`)_
+_(illustrative values, check your own with `helper.ps1 -Status`)_
 
 Every byte has its nibbles swapped (`2E`→`E2`, `06`→`60`, `4D`→`D4`, …).
 
@@ -702,7 +702,7 @@ recv  02 | 60 ce 00 00 | 04 | 06 1c 01 00 00 00 00 00     ack
 
 - HID access to these devices does **not** require administrator rights.
   `SimAppPro.exe` requests elevation (`highestAvailable` manifest) for driver/registry
-  work, not for device I/O — `WCtrlDcsBiosBridge.exe` drives the same hardware
+  work, not for device I/O, `WCtrlDcsBiosBridge.exe` drives the same hardware
   as `asInvoker`.
 - SimAppPro's `WWTHID_JSAPI.node` was rejected as an alternative: it is 32-bit x86,
   built against the raw V8 API of Electron 8.3.0 / Node 12.13.0, so hosting it would
@@ -726,6 +726,6 @@ If you are searching for answers to the following WinWing Orion 2 problems, this
 
 This utility is free and open source, with no ads and no trackers. If it saved you from the
 SimAppPro alt-tab shuffle and got you back to flying, you can put something in the tip jar.
-Entirely optional — every part of this stays free either way.
+Entirely optional, every part of this stays free either way.
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-C25E00?style=for-the-badge&logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/cbass2404)

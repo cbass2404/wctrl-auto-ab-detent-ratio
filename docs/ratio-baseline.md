@@ -76,7 +76,7 @@ On the ground, engine running:
 4. Advance the throttle until the relevant gauge reads the limit being anchored to.
 5. Record the axis percentage. That is the ratio.
 
-Use **the module's own documentation** for the limit, not general type knowledge — the manual
+Use **the module's own documentation** for the limit, not general type knowledge, the manual
 under `Mods\aircraft\<module>\Doc\`, or the in-sim kneeboard power charts. DCS flight models
 do not always match the real aircraft's published figures, and it is the DCS figure that
 matters, because DCS is what the user is flying.
@@ -88,7 +88,7 @@ matters, because DCS is what the user is flying.
 - Module list generated from a live install: **DCS 2.9.29.27278**, from the directory names
   under `CoreMods\aircraft\` and `Mods\aircraft\`.
 - DCS unit names were read out of each module's `entry.lua` and module lua rather than
-  assumed from marketing names. This matters — see [Name matching](#name-matching).
+  assumed from marketing names. This matters, see [Name matching](#name-matching).
 - Third-party mod names were read from `Saved Games\DCS\Mods\aircraft`.
 
 ### Confidence
@@ -101,7 +101,7 @@ matters, because DCS is what the user is flying.
 | **convention** | Not measured and does not need to be. 100 is the established "no notch" value. |
 | **provisional** | Holding value for a module that is not released yet. |
 
-**The one field this pass did not capture is the per-aircraft gauge reading** — the actual
+**The one field this pass did not capture is the per-aircraft gauge reading**, the actual
 manifold pressure, RPM or torque figure the notch was set against. The `Limit` column below
 names *which* limit each row is anchored to, but not the number on the dial. Anyone
 re-measuring a row should add it.
@@ -206,7 +206,7 @@ that it helps rather than annoys.
 | `NONE` | 75 | Never matches by name. Used when nothing else hits. |
 
 75 rather than 100 because 100 means no usable gate at all, which is the one thing this tool
-exists to provide. It deliberately agrees with `noMatchRatio`, which is also 75 — two
+exists to provide. It deliberately agrees with `noMatchRatio`, which is also 75, two
 settings that both mean "I do not know what this aircraft is" should not answer differently.
 
 `Merge-UserConfig` keeps a user's existing value for any name they already have, and everyone
@@ -223,14 +223,14 @@ from comparing intended names against the unit names actually read out of the in
 
 **1. Some unit names drop a hyphen the marketing name has.**
 
-- `OH58D` — an entry named `OH-58` matches nothing. The entry is `OH58`.
-- `AV8BNA` — an entry named `AV-8B` matches nothing. The entry is `AV8B`.
+- `OH58D`, an entry named `OH-58` matches nothing. The entry is `OH58`.
+- `AV8BNA`, an entry named `AV-8B` matches nothing. The entry is `AV8B`.
 
 **2. `P-51` does not cover the TF-51.** The unit is `TF-51D`, which does not contain the
 string `P-51`. Without its own entry the trainer falls through to `NONE`.
 
 **3. `FA-18` does not cover the Growler.** `EA-18G` does not contain `FA-18`, which is why
-`EA-18` is a separate entry. The Super Hornet needs no entry — `FA-18E`, `FA-18F`, `FA-18ET`
+`EA-18` is a separate entry. The Super Hornet needs no entry, `FA-18E`, `FA-18F`, `FA-18ET`
 and `FA-18FT` all contain `FA-18` and inherit the Hornet's value.
 
 ### Longest-match hazards
@@ -250,7 +250,7 @@ airframes it covers. Watch this on every name added.
 Names stay at the **family** level and match on the shortest string that identifies the family
 unambiguously. This keeps the table near 55 rows rather than 90, and avoids most of the
 longest-match problem. Split into variants only where the airframes genuinely want different
-values — `FW-190A` against `FW-190D` is a real case, since an A-8 and a D-9 are not the same
+values, `FW-190A` against `FW-190D` is a real case, since an A-8 and a D-9 are not the same
 engine and are not actuated the same way.
 
 ---
@@ -265,7 +265,7 @@ official modules and are not covered by the DCS version above.
 | `A-4` | A-4E-C | `A-4E-C` |
 | `EA-18` | CJS Super Hornet | `EA-18G` |
 | `UH-60` | UH-60L | `UH-60L`, `UH-60L_DAP` |
-| — | CJS Super Hornet | `FA-18E`, `FA-18F`, `FA-18ET`, `FA-18FT` — inherits `FA-18` |
+|, | CJS Super Hornet | `FA-18E`, `FA-18F`, `FA-18ET`, `FA-18FT`, inherits `FA-18` |
 
 `C-130` is **not** in this group. `C130J` ships in `CoreMods\aircraft` and `Mods\aircraft` as
 an official module with unit name `C-130J-30`.
@@ -276,7 +276,7 @@ an official module with unit name `C-130J-30`.
   can add.
 - **Eight rows are `estimated`**, all from reference images rather than flying: `F-15E`,
   `J-11`, `JF-17`, `Su-27`, `Su-33`, `Su-34`, `Bf-109`, `Spitfire`, `FW-190A`, `FW-190D`.
-  Several sit at exactly 75, which is also the `NONE` value — that is a placeholder, not a
+  Several sit at exactly 75, which is also the `NONE` value, that is a placeholder, not a
   measurement.
 - **`A-6` is provisional.** Heatblur's A-6E is not released. Re-measure when it ships.
 - **Helicopters are unexamined by decision.** See the no-notch section.
