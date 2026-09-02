@@ -358,8 +358,8 @@ Nothing is hardcoded. The ratio table lives inside a **throttle entry** in
 ```json
 "throttles": [
     {
-        "match":       [ "Orion Throttle Base II" ],
-        "label":       "WinWing Orion Throttle Base II",
+        "match":       [ "Orion Throttle Base" ],
+        "label":       "WinWing Orion Throttle Base",
         "throttlePid": 0,
         "ratios":      [ { "name": "NONE", "ratio": 75 } ]
     }
@@ -374,8 +374,9 @@ At startup the helper enumerates every WinWing HID device (VID `0x4098`), then n
 two independent gates from the entry in force:
 
 1. **`match`**, case-insensitive substrings; a device qualifies if its product name
-   contains **any** of them. Default `[ "Orion Throttle Base II" ]`. `throttlePid`
-   restricts the search to one USB product id, or `0` for any.
+   contains **any** of them. Default `[ "Orion Throttle Base" ]`, with no numeral, so it
+   covers both the Base I and the Base II. `throttlePid` restricts the search to one USB
+   product id, or `0` for any.
 2. **Programmed afterburner calibration** at `0x114`/`0x118`, which picks the base out
    of the base + handles assembly.
 
@@ -397,15 +398,21 @@ company rather than the brand and survived all three names, SimAppPro's own
 `supportDevice.json` lists `"vid": 16536` for both its `WINWING` and `WINCTRL` entries
 of the same hardware.
 
-> Substrings are prefix-friendly: a filter of `"Orion Throttle Base I"` also matches a
-> **Base II**, since one name contains the other. Filtering _for_ the Base II is safe
-> (a Base I lacks the `II`); filtering for a Base I needs a longer, distinguishing
-> string. Use `[]` to accept any WinWing device.
+> Substrings are prefix-friendly, and the shipped filter uses that on purpose: `"Orion
+> Throttle Base"` matches the **Base I** and the **Base II** alike. They are the same
+> throttle here, identical firmware and identical detent, so one table serves both and
+> there is no second entry to order correctly.
+>
+> If you ever do want to split them, note that a filter of `"Orion Throttle Base I"`
+> also matches a **Base II**, since one name contains the other. Filtering _for_ the
+> Base II is safe (a Base I lacks the `II`); filtering for a Base I needs a longer,
+> distinguishing string, and the Base II entry must come first. Use `[]` to accept any
+> WinWing device.
 
 Run `lib\helper.ps1 -Devices` to see what is attached and what the filter allows:
 
 ```
-* WinWing Orion Throttle Base II: match = [Orion Throttle Base II], throttlePid = 0, 55 ratios
+* WinWing Orion Throttle Base: match = [Orion Throttle Base], throttlePid = 0, 55 ratios
 MATCH  0xBD64  WINCTRL Orion Throttle Base II + F15EX HANDLE L + F15EX HANDLE R
   -    0xBF05  WINCTRL CarrierAce PTO 2
   -    0xBB36  WINCTRL 32 MCDU CAPTAIN
