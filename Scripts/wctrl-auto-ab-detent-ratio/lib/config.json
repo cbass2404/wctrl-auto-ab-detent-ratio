@@ -24,7 +24,7 @@
 
     "_comment_throttles": "One entry per throttle, each with its own ratio table. Almost everyone will only ever have one, and this ships with exactly one - the extra nesting exists so a second throttle can have different ratios rather than fighting over a shared table. The helper picks the entry whose 'match' finds a device that is actually plugged in, and the config manager edits that entry's table.",
 
-    "_comment_throttles_match": "Only touch devices whose product name contains one of these (case-insensitive substrings). Keeps the helper off other WinWing gear - an Orion Throttle Base I, a second stick - that might also report afterburner calibration. Match the MODEL, not the brand: the vendor rebranded twice (WinWing -> WinUSA -> WinCtrl) in about 18 months, so the same model reports as 'WINWING ...', 'WINUSA ...' or 'WINCTRL ...' depending on firmware age. Several substrings are allowed because one physical model can report under more than one of those names. Use [] to accept any WinWing device. Run 'helper.ps1 -Devices' to see the exact names attached.",
+    "_comment_throttles_match": "Only touch devices whose product name contains one of these (case-insensitive substrings). Keeps the helper off other WinWing gear - a stick base, a rudder base - that might also report afterburner calibration. The shipped filter deliberately stops at 'Orion Throttle Base' with no numeral, so it covers the Base I and the Base II: they are the same throttle for our purposes, identical firmware and identical detent, so one table serves both. Match the MODEL, not the brand: the vendor rebranded twice (WinWing -> WinUSA -> WinCtrl) in about 18 months, so the same model reports as 'WINWING ...', 'WINUSA ...' or 'WINCTRL ...' depending on firmware age. Several substrings are allowed because one physical model can report under more than one of those names. Use [] to accept any WinWing device. Run 'helper.ps1 -Devices' to see the exact names attached.",
 
     "_comment_throttles_label": "What to call this throttle in the config manager's window. Display only - matching never looks at it.",
 
@@ -34,8 +34,8 @@
 
     "throttles": [
         {
-            "match":       [ "Orion Throttle Base II" ],
-            "label":       "WinWing Orion Throttle Base II",
+            "match":       [ "Orion Throttle Base" ],
+            "label":       "WinWing Orion Throttle Base",
             "throttlePid": 0,
             "ratios":      [
                 { "name": "NONE",           "ratio": 75 },
