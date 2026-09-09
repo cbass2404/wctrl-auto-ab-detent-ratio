@@ -82,7 +82,15 @@ $hookName    = "$baseName-hook-$version.lua"
 # release that has to correct a shipped default can flip it and no more.
 # -KeepConfig overrides a 'Replace' release for one install; -ForceConfig
 # overrides a 'Merge' one.
-$configPolicy = 'Merge'
+#
+# THIS RELEASE: 'Replace'. The shipped 'match' changed from
+# "Orion Throttle Base II" to "Orion Throttle Base", with no numeral, so one
+# entry covers the Base I and the Base II. That is a corrected shipped VALUE,
+# which is exactly what a merge cannot deliver: it keeps the user's own match
+# by design, so merging would leave every existing install on the old
+# numeral-bound filter and needing a hand edit to see a Base I. Their file is
+# backed up beside the new one. Set back to 'Merge' next release.
+$configPolicy = 'Replace'
 
 # Anything from this project under any other name: earlier project names, and
 # any other version of this one. All of it gets removed after the new version is

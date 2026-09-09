@@ -232,7 +232,7 @@ function Select-MatchingDevice {
 
         Without a name filter any VID 0x4098 device whose part reports
         programmed afterburner calibration would be fair game - which could pick
-        up a different throttle (an Orion Base I, or a second stick) and
+        up a different throttle (a stick base, or a rudder base) and
         reconfigure it.
 
         'match' is a list of case-insensitive substrings; a device qualifies if
