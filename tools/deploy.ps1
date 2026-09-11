@@ -82,15 +82,7 @@ $hookName    = "$baseName-hook-$version.lua"
 # release that has to correct a shipped default can flip it and no more.
 # -KeepConfig overrides a 'Replace' release for one install; -ForceConfig
 # overrides a 'Merge' one.
-#
-# THIS RELEASE: 'Replace'. The shipped 'match' changed from
-# "Orion Throttle Base II" to "Orion Throttle Base", with no numeral, so one
-# entry covers the Base I and the Base II. That is a corrected shipped VALUE,
-# which is exactly what a merge cannot deliver: it keeps the user's own match
-# by design, so merging would leave every existing install on the old
-# numeral-bound filter and needing a hand edit to see a Base I. Their file is
-# backed up beside the new one. Set back to 'Merge' next release.
-$configPolicy = 'Replace'
+$configPolicy = 'Merge'
 
 # Anything from this project under any other name: earlier project names, and
 # any other version of this one. All of it gets removed after the new version is
@@ -925,7 +917,9 @@ function New-Shortcut {
     $sep    = [IO.Path]::DirectorySeparatorChar
     $libDir = Join-Path (Join-Path (Join-Path $Dcs 'Scripts') $projectName) 'lib'
     $shim   = Join-Path $libDir 'run-hidden.vbs'
-    if (-not (Test-Path -LiteralPath $shim)) { return }
+    # Checked in the package, which the install has just copied from, so a
+    # -WhatIf run still reports the shortcut it would create.
+    if (-not (Test-Path -LiteralPath (Join-Path $srcDir 'lib\run-hidden.vbs'))) { return }
     $icon   = Join-Path $libDir 'app.ico'
 
     $dir = Get-StartMenuDir
@@ -1047,6 +1041,11 @@ function Install-ToTarget {
     $sep          = [IO.Path]::DirectorySeparatorChar
     $destConfig   = Join-Path $destDir ('lib' + $sep + 'config.json')
     $configExists = Test-Path -LiteralPath $destConfig
+    # The shipped defaults, read from the package rather than from their copy
+    # in $destDir. Under -WhatIf nothing was copied, and on a real run the two
+    # are the same bytes wherever this is used, which is only when there was
+    # no config.json here to merge in place.
+    $shippedConfig = Join-Path $srcDir ('lib' + $sep + 'config.json')
 
     # Copy the whole tree - the payload is no longer flat.
     foreach ($f in Get-ChildItem -LiteralPath $srcDir -Recurse -File) {
@@ -1090,7 +1089,7 @@ function Install-ToTarget {
     # orphaned where nothing reads it. Merge it across, then remove it.
     $legacyConfig = Join-Path $destDir 'config.json'
     if (-not $configExists -and (Test-Path -LiteralPath $legacyConfig)) {
-        if (Write-UserConfig -ShippedPath $destConfig -UserPath $legacyConfig `
+        if (Write-UserConfig -ShippedPath $shippedConfig -UserPath $legacyConfig `
                              -DestPath $destConfig -Source 'the previous layout') {
             $script:carriedRatios = $true
         }
@@ -1116,7 +1115,7 @@ function Install-ToTarget {
             $priorCfg = Join-Path $prior ('lib' + $sep + 'config.json')
             if (-not (Test-Path -LiteralPath $priorCfg)) { $priorCfg = Join-Path $prior 'config.json' }
             if (-not (Test-Path -LiteralPath $priorCfg)) { continue }
-            if (Write-UserConfig -ShippedPath $destConfig -UserPath $priorCfg `
+            if (Write-UserConfig -ShippedPath $shippedConfig -UserPath $priorCfg `
                                  -DestPath $destConfig -Source (Split-Path $prior -Leaf)) {
                 $script:carriedRatios = $true
             }
@@ -1125,10 +1124,13 @@ function Install-ToTarget {
     }
 
     # A true replace: drop anything this package does not ship, at any depth.
-    # config.json and its backups are user data and are never pruned.
+    # config.json and its backups are user data and are never pruned. Under
+    # -WhatIf a new version's folder was never created, so there is nothing
+    # in it to prune and nothing to list.
     $packaged = @(Get-ChildItem -LiteralPath $srcDir -Recurse -File |
                   ForEach-Object { $_.FullName.Substring($srcDir.Length).TrimStart($sep) })
-    foreach ($old in Get-ChildItem -LiteralPath $destDir -Recurse -File) {
+    $present  = @(if (Test-Path -LiteralPath $destDir) { Get-ChildItem -LiteralPath $destDir -Recurse -File })
+    foreach ($old in $present) {
         $rel  = $old.FullName.Substring($destDir.Length).TrimStart($sep)
         $leaf = Split-Path -Leaf $rel
         if ($packaged -contains $rel) { continue }
@@ -1278,6 +1280,144 @@ function Confirm-DcsClosed {
     }
 }
 
+# Why the ratio editor is closed for the user, where DCS is only waited out.
+#
+# The editor is a powershell.exe started from inside the installed folder: the
+# Start Menu shortcut makes lib\ its working directory, and Windows will not
+# delete a folder some process is sitting in. Install-ToTarget removes the
+# previous version last, so an update with the editor open got most of the way
+# and then threw, leaving the new version in, the old folder half deleted, the
+# old hook beside the new one and no shortcut. Uninstall hit the same wall on
+# its first Remove-Item.
+#
+# Closing it is safe where closing DCS is not. It is asked, never killed: the
+# close goes through the editor's own FormClosing, so unsaved edits still get
+# the save prompt, and a Yes lands in config.json before the install reads it
+# to carry the ratios forward.
+
+function Get-RunningEditor {
+    <#
+        Ratio editors running from inside any of the target folders, as
+        Win32_Process objects, or an empty array.
+
+        Matched on the script path in the command line, never on the process
+        name: every PowerShell window on the machine is a powershell.exe, and
+        an editor is only in the way when it runs from a folder this run is
+        about to change. One opened from a repo checkout or from a DCS folder
+        that is not a target is left alone.
+
+        A command line that cannot be read (another user's process, or an
+        elevated one seen from an unelevated install) is not matched. That
+        leaves the run no worse off than it was before this check existed, and
+        the same goes for WMI being unavailable altogether.
+    #>
+    param([string[]]$Targets)
+
+    $roots = @(foreach ($t in $Targets) {
+        try   { $full = (Resolve-Path -LiteralPath $t -ErrorAction Stop).ProviderPath }
+        catch { continue }
+        [regex]::Escape((Join-Path $full.TrimEnd('\') 'Scripts') + '\')
+    })
+    if ($roots.Count -eq 0) { return @() }
+
+    try {
+        $procs = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop `
+                       -Filter "CommandLine LIKE '%config-manager-gui.ps1%'")
+    } catch { return @() }
+
+    # The launchers name the script too (wscript.exe run-hidden.vbs
+    # config-manager-gui.ps1), but only as a bare file name and only for the
+    # moment it takes them to start PowerShell. Requiring a PowerShell host
+    # and the full path under a target keeps them out.
+    $pattern = '(?i)(' + ($roots -join '|') + ')[^"]*\\config-manager-gui\.ps1'
+    return @($procs | Where-Object {
+        $_.ProcessId -ne $PID -and
+        $_.Name -in @('powershell.exe', 'pwsh.exe') -and
+        $_.CommandLine -match $pattern
+    })
+}
+
+function Wait-ProcessExit {
+    # True once none of these are running, false if the time runs out first.
+    param([int[]]$Ids, [int]$Seconds)
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    while ($true) {
+        if (@(Get-Process -Id $Ids -ErrorAction SilentlyContinue).Count -eq 0) { return $true }
+        if ([DateTime]::UtcNow -ge $deadline) { return $false }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
+function Confirm-EditorClosed {
+    <#
+        Preflight gate, after the targets are known and before the first file
+        in any of them is touched. Asks every editor running from a target to
+        close, then waits for it.
+
+        CloseMainWindow sends the window the same close a click on its X does,
+        so this can never lose an edit. It refuses to do anything while the
+        editor has a dialog up, the save prompt included, and a Cancel on
+        that prompt simply keeps the window open. Either way the editor is
+        still running when the wait runs out, and this falls back to the same
+        Enter-or-Q loop as Confirm-DcsClosed. Each Enter asks again, so a
+        Cancel pressed by mistake gets the prompt back rather than a dead end.
+
+        -WhatIf reports and carries on without asking anything to close.
+    #>
+    param([string[]]$Targets)
+
+    $verb  = if ($Uninstall) { 'removed' } else { 'replaced' }
+    $asked = $false
+
+    while ($true) {
+        $procs = @(Get-RunningEditor -Targets $Targets)
+
+        if ($procs.Count -eq 0) {
+            if ($asked) { Write-Host 'The ratio editor is closed - continuing.'; Write-Host '' }
+            return
+        }
+
+        $found = ($procs | ForEach-Object { "PID $($_.ProcessId)" }) -join ', '
+
+        if ($WhatIfPreference) {
+            Write-Host "The ratio editor is open ($found). A real run would ask it to close"
+            Write-Host "first, so the installed files can be $verb."
+            Write-Host ''
+            return
+        }
+
+        Write-Host "The ratio editor is open ($found). Asking it to close so the"
+        Write-Host "installed files can be $verb."
+        foreach ($p in $procs) {
+            try { [void](Get-Process -Id $p.ProcessId -ErrorAction Stop).CloseMainWindow() } catch { }
+        }
+        $asked = $true
+
+        # Long enough for a window with nothing unsaved to go. One with unsaved
+        # edits is waiting on its prompt, and that is a question for the user.
+        if (Wait-ProcessExit -Ids @($procs | ForEach-Object { [int]$_.ProcessId }) -Seconds 5) { continue }
+
+        Write-Host ''
+        Write-Host 'It is still open. If it is asking whether to save your changes,'
+        Write-Host 'answer that. If another dialog is open in it, close that first.'
+        Write-Host ''
+
+        if (-not (Test-Interactive)) {
+            Write-Host 'Close the ratio editor, then run this again.'
+            Write-Host ''
+            exit 1
+        }
+
+        $ans = Read-Host 'Close the ratio editor, then press Enter to check again, or Q to quit'
+        if ($ans -match '^(?i)\s*q') {
+            Write-Host ''
+            Write-Host 'Cancelled - nothing was changed.'
+            exit 1
+        }
+        Write-Host ''
+    }
+}
+
 # ---------------------------------------------------------------------- main --
 
 # Source keeps the plain, unversioned names so the repo has a stable layout and
@@ -1302,6 +1442,11 @@ Write-Host ''
 Write-Host ("Target{0}:" -f $(if ($targets.Count -gt 1) { "s ($($targets.Count))" } else { '' }))
 $targets | ForEach-Object { Write-Host "  $_" }
 Write-Host ''
+
+# Before the first file in any target is touched: an editor left open holds its
+# folder, and a Yes on its save prompt has to reach config.json before the
+# install reads it.
+Confirm-EditorClosed -Targets $targets
 
 foreach ($t in $targets) {
     Write-Host $t
