@@ -75,6 +75,7 @@ No more alt-tabbing to SimAppPro every time you change module.
   - [ ] `Afterburner Detent`: **54.5**
   - [ ] `Afterburner Detent Deadzone`: **1**
 - [ ] [Test your modules](#5-check-it-works)
+- [ ] **Optional** In config.json you can update `"restoreRatio": "clear"` to a numeric value if you want your most common module to be your default ratio. This will save writes. Example: `"restoreRatio": 100` is what I use.
 
 The steps below cover each of these in detail. Five steps, about ten minutes. **Only step 1 needs SimAppPro**, after that you can close
 it and leave it closed.
