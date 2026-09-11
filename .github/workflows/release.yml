@@ -131,6 +131,9 @@ jobs:
         with:
           files: ${{ steps.package.outputs.zip }}
           # Anything with a pre-release suffix (-alpha, -beta, -rc) is flagged so
-          # it does not show up as "Latest" for people browsing the repo.
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          # it does not show up as "Latest" for people browsing the repo. The
+          # 1.0.0 pre-releases are the exception: there is no stable release for
+          # "Latest" to point at yet, and without one /releases/latest has
+          # nowhere to go, so people scroll the list and download an old zip.
+          prerelease: ${{ contains(github.ref_name, '-') && !startsWith(github.ref_name, 'v1.0.0-') }}
           generate_release_notes: true

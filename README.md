@@ -67,7 +67,16 @@ No more alt-tabbing to SimAppPro every time you change module.
 
 ## Setup
 
-Five steps, about ten minutes. **Only step 1 needs SimAppPro**, after that you can close
+- [ ] Close DCS
+- [ ] Close WinWing Afterburner Ratios GUI (If updating)
+- [ ] [Calibrate the afterburner detent](#1-calibrate-the-afterburner-detent) in SimAppPro
+- [ ] [Run `install.cmd`](#2-install)
+- [ ] [Update the F-14 Special settings](#4-per-aircraft-dcs-settings) in DCS
+  - [ ] `Afterburner Detent`: **54.5**
+  - [ ] `Afterburner Detent Deadzone`: **1**
+- [ ] [Test your modules](#5-check-it-works)
+
+The steps below cover each of these in detail. Five steps, about ten minutes. **Only step 1 needs SimAppPro**, after that you can close
 it and leave it closed.
 
 ### 1. Calibrate the afterburner detent
@@ -88,7 +97,7 @@ identify the right throttle in the first place).
 
 ### 2. Install
 
-**Download the [latest release](../../releases), extract it, and double-click
+**Download the [latest release](../../releases/latest), extract it, and double-click
 `install.cmd`.** That is the whole install.
 
 It finds your DCS folder, or asks, if you have more than one, and copies itself in.
