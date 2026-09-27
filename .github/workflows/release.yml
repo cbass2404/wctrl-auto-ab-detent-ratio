@@ -137,3 +137,30 @@ jobs:
           # nowhere to go, so people scroll the list and download an old zip.
           prerelease: ${{ contains(github.ref_name, '-') && !startsWith(github.ref_name, 'v1.0.0-') }}
           generate_release_notes: true
+
+      # A release published with this workflow's token does not fire other
+      # workflows, so the Discord #releases post is made here. A failed post
+      # leaves the release standing. Without the DISCORD_RELEASE_WEBHOOK secret
+      # it posts nothing.
+      - name: Announce on Discord
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+        run: |
+          if (-not $env:WEBHOOK) { Write-Host '::warning::DISCORD_RELEASE_WEBHOOK is not set, nothing posted'; return }
+          $r = gh release view $env:GITHUB_REF_NAME --json name,url,body | ConvertFrom-Json
+          # An embed description holds 4096 characters; the link always fits.
+          $notes = ($r.body -replace "`r", '').Trim()
+          if ($notes.Length -gt 3800) { $notes = $notes.Substring(0, 3800) + "`n`n..." }
+          $embed = @{
+            title       = $r.name
+            url         = $r.url
+            description = "$notes`n`n[Download and full notes]($($r.url))"
+            color       = 5763719
+            footer      = @{ text = $env:GITHUB_REPOSITORY }
+          }
+          $json = @{ embeds = @($embed) } | ConvertTo-Json -Depth 5
+          Invoke-RestMethod -Uri $env:WEBHOOK -Method Post -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json))
