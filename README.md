@@ -19,7 +19,8 @@ No more alt-tabbing to SimAppPro every time you change module.
 - Runs unelevated. No DCS, SimAppPro or WinWing file is modified.
 
 > **Beta.** Working well day to day, but the USB protocol was reverse-engineered, so
-> treat it as community software rather than a vendor feature. Bug reports welcome.
+> treat it as community software rather than a vendor feature. Bug reports welcome, and
+> questions are answered on the [Discord](https://discord.gg/W9tsVe3g3P).
 
 ---
 
@@ -312,6 +313,8 @@ ties with.
 
 **Reporting a bug.** Include the version, it is in the folder name, the hook filename,
 and the first line of the log.
+
+**Still stuck?** Ask in #help on the [Discord](https://discord.gg/W9tsVe3g3P).
 
 ---
 
